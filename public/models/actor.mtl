@@ -1,0 +1,72 @@
+# Blender 4.4.3 MTL File: 'None'
+# www.blender.org
+
+newmtl Human.afro01.001
+Ns 90.000000
+Ka 1.000000 1.000000 1.000000
+Kd 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+illum 2
+map_d C:/Users/admin/Documents/mpfb/data/hair/afro01/afro_diffuse.png
+
+newmtl Human.body.001
+Ns 90.000000
+Ka 1.000000 1.000000 1.000000
+Kd 1.000000 0.950000 0.850000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+illum 2
+map_d C:/Users/admin/Documents/mpfb/data/skins/middleage_asian_male/middleage_lightskinned_male_diffuse2.png
+
+newmtl Human.eyelashes01
+Ns 90.000000
+Ka 1.000000 1.000000 1.000000
+Kd 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+illum 2
+map_d C:/Users/admin/Documents/mpfb/data/eyelashes/eyelashes01/eyelashes01.png
+
+newmtl Human.high-poly.001
+Ns 90.000000
+Ka 1.000000 1.000000 1.000000
+Kd 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+illum 2
+map_d C:/Users/admin/Documents/mpfb/data/eyes/materials/brown_eye.png
+
+newmtl Human.male_casualsuit04.001
+Ns 90.000000
+Ka 1.000000 1.000000 1.000000
+Kd 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+illum 2
+map_d C:/Users/admin/Documents/mpfb/data/clothes/male_casualsuit04/male_casualsuit04_diffuse.png
+
+newmtl Human.shoes02
+Ns 90.000000
+Ka 1.000000 1.000000 1.000000
+Kd 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+illum 2
+map_d C:/Users/admin/Documents/mpfb/data/clothes/shoes02/shoes02_diffuse.png
+
+newmtl Human.teeth_base.001
+Ns 90.000000
+Ka 1.000000 1.000000 1.000000
+Kd 0.640000 0.640000 0.640000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+illum 2
+map_d C:/Users/admin/Documents/mpfb/data/teeth/teeth_base/teeth.png
