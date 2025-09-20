@@ -8,6 +8,7 @@ import {
   Bounds,
 } from '@react-three/drei'
 import type { PropsWithChildren } from 'react'
+import { forwardRef, useImperativeHandle, useRef } from 'react'
 import * as THREE from 'three'
 
 function Ground() {
@@ -53,13 +54,32 @@ function Ground() {
   )
 }
 
-export default function SceneCanvas({ children }: PropsWithChildren) {
+export type SceneCanvasHandle = {
+  capturePngDataUrl: () => string | null
+}
+
+export default forwardRef<SceneCanvasHandle, PropsWithChildren>(function SceneCanvas({ children }, ref) {
+  const glRef = useRef<THREE.WebGLRenderer | null>(null)
+
+  useImperativeHandle(ref, () => ({
+    capturePngDataUrl: () => {
+      const gl = glRef.current
+      if (!gl) return null
+      try {
+        return gl.domElement.toDataURL('image/png')
+      } catch {
+        return null
+      }
+    },
+  }), [])
   return (
     <Canvas
       dpr={[1, 2]}
       camera={{ fov: 32, near: 0.1, far: 100, position: [0, 1.65, 3.15] }}
       shadows
+      gl={{ preserveDrawingBuffer: true }}
       onCreated={({ gl, scene }) => {
+        glRef.current = gl
         gl.outputColorSpace = THREE.SRGBColorSpace
         gl.toneMapping = THREE.ACESFilmicToneMapping
         gl.toneMappingExposure = 1.05
@@ -95,7 +115,7 @@ export default function SceneCanvas({ children }: PropsWithChildren) {
 
       <Ground />
 
-      <Bounds fit clip observe margin={1.05}>
+      <Bounds clip observe margin={1.05}>
         {children}
       </Bounds>
 
@@ -111,4 +131,4 @@ export default function SceneCanvas({ children }: PropsWithChildren) {
       />
     </Canvas>
   )
-}
+})

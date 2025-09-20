@@ -3,6 +3,7 @@ import Landing from "./pages/Landing";
 import Customize from "./pages/Customize";
 import Design from "./pages/Design";
 import Preview from "./pages/Preview";
+import Review from "./pages/Review";
 import ExportPage from "./pages/ExportPage";
 
 function App() {
@@ -75,6 +76,7 @@ function App() {
           <Route path="/customize" element={<Customize />} />
           <Route path="/design" element={<Design />} />
           <Route path="/preview" element={<Preview />} />
+          <Route path="/review" element={<Review />} />
           <Route path="/export" element={<ExportPage />} />
         </Routes>
       </main>

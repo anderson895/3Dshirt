@@ -3,12 +3,13 @@ import { create } from 'zustand'
 
 export type Gender = 'male' | 'female'
 export type BodyPreset = 'slim' | 'average' | 'plus'
+export type BodyType = 'ectomorph' | 'endomorph' | 'mesomorph'
 export type GarmentStyle = 'fit' | 'regular' | 'loose'
 export type ShirtPart = 'front' | 'back' | 'sleeveL' | 'sleeveR'
 
 export type MorphSet = { height: number; waist: number; shoulder: number; chest: number; arms: number }
 export type Measurements = { heightCm: number; chestCm: number; waistCm: number; shouldersCm: number; sleeveCm: number }
-export type GarmentConfig = { preset?: 'S'|'M'|'L'|'XL'; custom?: { widthIn: number; lengthIn: number; sleeveIn: number }; style: GarmentStyle }
+export type GarmentConfig = { preset?: 'S'|'M'|'L'|'XL'; custom?: { widthIn: number; lengthIn: number; sleeveIn: number }; style: GarmentStyle; useMorphOnly?: boolean }
 
 export type Layer = {
   id: string
@@ -34,6 +35,8 @@ export type UVRects = Record<ShirtPart, UVRect>
 export type DesignState = {
   gender: Gender
   preset: BodyPreset
+  bodyType: BodyType
+  bodyTypeIntensity: number
   morphs: MorphSet
   heightScale: number
   measurements: Measurements
@@ -53,6 +56,8 @@ export type DesignState = {
 
   setGender: (g: Gender) => void
   setPreset: (p: BodyPreset) => void
+  setBodyType: (bt: BodyType) => void
+  setBodyTypeIntensity: (intensity: number) => void
   setMorph: (k: keyof MorphSet, v: number) => void
   setHeightScale: (v: number) => void
   setMeasurements: (m: Partial<Measurements>) => void
@@ -65,10 +70,12 @@ export type DesignState = {
 export const useDesign = create<DesignState>((set) => ({
   gender: 'male',
   preset: 'average',
+  bodyType: 'mesomorph',
+  bodyTypeIntensity: 0.0,
   morphs: { height: 0.5, waist: 0.5, shoulder: 0.5, chest: 0.5, arms: 0.5 },
   heightScale: 1.0,
   measurements: { heightCm: 175, chestCm: 96, waistCm: 82, shouldersCm: 46, sleeveCm: 60 },
-  garment: { style: 'regular', preset: 'M' },
+  garment: { style: 'regular', preset: 'M', useMorphOnly: true },
   layers: [],
 
   baseColor: '#b91c1c',
@@ -89,6 +96,8 @@ export const useDesign = create<DesignState>((set) => ({
 
   setGender: (gender) => set({ gender }),
   setPreset: (preset) => set({ preset }),
+  setBodyType: (bodyType) => set({ bodyType }),
+  setBodyTypeIntensity: (bodyTypeIntensity) => set({ bodyTypeIntensity }),
   setMorph: (k, v) => set((s) => ({ morphs: { ...s.morphs, [k]: v } })),
   setHeightScale: (v) => set({ heightScale: v }),
   setMeasurements: (m) => set((s) => ({ measurements: { ...s.measurements, ...m } })),

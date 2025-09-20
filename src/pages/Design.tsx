@@ -1,6 +1,7 @@
 /* pages/DesignPage.tsx */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useRef, useState, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { nanoid } from 'nanoid'
 import { useDesign } from '../store/designStore'
 import Mannequin from '../components/Three/Mannequin'
@@ -65,7 +66,8 @@ function UploadButton({ part }: { part: 'front'|'back'|'sleeveL'|'sleeveR' }) {
 const QUICK_COLORS = ['#111111','#ffffff','#f87171','#34d399','#60a5fa','#fbbf24','#a78bfa','#f472b6']
 
 export default function DesignPage() {
-  const { addLayer, setShirtTexCanvas, bumpShirtTexStamp, baseColor, setBaseColor, layers } = useDesign()
+  const nav = useNavigate()
+  const { addLayer, setShirtTexCanvas, bumpShirtTexStamp, baseColor, setBaseColor, layers, garment, setGarment } = useDesign()
   const [part, setPart] = useState<'front'|'back'|'sleeveL'|'sleeveR'>('front')
 
   const [showGrid, setShowGrid] = useState(true)
@@ -176,6 +178,13 @@ export default function DesignPage() {
             >
               {isRefreshing ? 'Refreshing…' : 'Refresh 3D Preview'}
             </button>
+            <button
+              onClick={() => nav('/review')}
+              className="px-3 py-1.5 rounded bg-black text-white"
+              title="Go to Step 3: Review & Export"
+            >
+              Step 3: Review & Export
+            </button>
           </div>
         </header>
 
@@ -183,7 +192,7 @@ export default function DesignPage() {
           <Step n={1} label="Choose a part (Front, Back, Sleeves)" />
           <Step n={2} label="Upload image or add text" />
           <Step n={3} label="Drag/scale; use Fit/Center guides" />
-          <Step n={4} label="Adjust shirt color & preview in 3D" />
+          <Step n={4} label="Adjust shirt color & size; preview in 3D" />
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
@@ -233,8 +242,8 @@ export default function DesignPage() {
             title="Insert editable text"
             onClick={() => addLayer({
               id: nanoid(), kind: 'text', part,
-              x: 80, y: 80, scale: 1, rotation: 0, opacity: 1,
-              text: 'Your Text', size: 36, color: '#111', z: Date.now(),
+              x: 176, y: 238, scale: 1, rotation: 0, opacity: 1,
+              text: 'Your Text', size: 36, color: '#ffffff', z: Date.now(),
             })}
           >
             Add Text
@@ -251,6 +260,75 @@ export default function DesignPage() {
             </label>
           </div>
         </div>
+
+        <section className="rounded border p-3 space-y-3">
+          <h3 className="font-medium">Size & fit</h3>
+          <div className="flex flex-wrap gap-3 items-center text-sm">
+            <label className="inline-flex items-center gap-2">
+              <span>Preset</span>
+              <select
+                className="border rounded px-2 py-1"
+                value={garment.preset ?? 'M'}
+                onChange={(e)=> setGarment({ preset: e.target.value as any })}
+              >
+                {['S','M','L','XL'].map(p => (<option key={p} value={p}>{p}</option>))}
+              </select>
+            </label>
+            <label className="inline-flex items-center gap-2">
+              <span>Style</span>
+              <select
+                className="border rounded px-2 py-1"
+                value={garment.style}
+                onChange={(e)=> setGarment({ style: e.target.value as any })}
+              >
+                {['fit','regular','loose'].map(s => (<option key={s} value={s}>{s}</option>))}
+              </select>
+            </label>
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="accent-black"
+                checked={!!garment.useMorphOnly}
+                onChange={(e)=> setGarment({ useMorphOnly: e.target.checked })}
+              />
+              <span>Match Blender (morphs only)</span>
+            </label>
+          </div>
+
+          <div className={`grid grid-cols-2 gap-4 text-sm ${garment.useMorphOnly ? 'opacity-50 pointer-events-none' : ''}`}>
+            <div>
+              <label className="flex items-center justify-between mb-1">
+                <span>Width (in)</span>
+                <span className="tabular-nums">{(garment.custom?.widthIn ?? 20).toFixed(1)}</span>
+              </label>
+              <input
+                type="range"
+                min={17}
+                max={24}
+                step={0.1}
+                className="w-full"
+                value={garment.custom?.widthIn ?? 20}
+                onChange={(e)=> setGarment({ custom: { ...(garment.custom ?? {}), widthIn: Number(e.target.value) } })}
+              />
+            </div>
+            <div>
+              <label className="flex items-center justify-between mb-1">
+                <span>Length (in)</span>
+                <span className="tabular-nums">{(garment.custom?.lengthIn ?? 28).toFixed(1)}</span>
+              </label>
+              <input
+                type="range"
+                min={24}
+                max={33}
+                step={0.1}
+                className="w-full"
+                value={garment.custom?.lengthIn ?? 28}
+                onChange={(e)=> setGarment({ custom: { ...(garment.custom ?? {}), lengthIn: Number(e.target.value) } })}
+              />
+            </div>
+          </div>
+          <p className="text-xs text-gray-500">Presets give a starting point. Use sliders for fine-tuning.</p>
+        </section>
 
         <details className="rounded border p-3 text-sm text-gray-700 bg-gray-50" open>
           <summary className="font-medium cursor-pointer select-none">Quick tips</summary>

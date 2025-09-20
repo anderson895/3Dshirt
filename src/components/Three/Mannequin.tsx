@@ -7,6 +7,7 @@ import { useGLTF } from "@react-three/drei";
 import { SkeletonUtils } from "three-stdlib";
 import { useDesign } from "../../store/designStore";
 import type { UVRects } from "../../store/designStore";
+import { inspectModelMorphs } from "../../utils/modelInspector";
 
 type GLTFScene = { scene: THREE.Group };
 
@@ -69,6 +70,33 @@ function ensureUniqueMaterial(mesh: THREE.Mesh | THREE.SkinnedMesh) {
   mats.forEach((m) => ((m as any).needsUpdate = true));
 }
 
+// Preserve deform-related shader flags when assigning/tinting materials
+function adoptDeformFlags(
+  mesh: THREE.Mesh | THREE.SkinnedMesh,
+  mat: THREE.Material
+) {
+  const std = mat as THREE.MeshStandardMaterial;
+  if ((std as any).isMeshStandardMaterial) {
+    (std as any).skinning = (mesh as any).isSkinnedMesh || (std as any).skinning;
+    (std as any).morphTargets = !!(mesh as any).morphTargetDictionary || (std as any).morphTargets;
+    const hasMorphNormals = !!((mesh.geometry as THREE.BufferGeometry).morphAttributes?.normal?.length);
+    (std as any).morphNormals = hasMorphNormals || (std as any).morphNormals;
+    (std as any).needsUpdate = true;
+  }
+}
+
+// Nudge cloth in front of body to avoid z-fighting, while keeping depth testing
+function setClothOverlayBias(mesh: THREE.Mesh | THREE.SkinnedMesh, mat: THREE.Material) {
+  const std = mat as THREE.MeshStandardMaterial;
+  if ((std as any).isMeshStandardMaterial) {
+    std.polygonOffset = true;
+    std.polygonOffsetFactor = -2; // pull a touch towards camera
+    std.polygonOffsetUnits = -2;
+    adoptDeformFlags(mesh, std);
+    std.needsUpdate = true;
+  }
+}
+
 function nameWithMaterial(o: THREE.Mesh | THREE.SkinnedMesh) {
   return `${o.name || ""} ${materialName(o.material)}`.trim();
 }
@@ -80,54 +108,9 @@ function findMeshByName(root: THREE.Object3D, matcher: RegExp) {
   });
   return hit;
 }
-function findLargestMesh(root: THREE.Object3D) {
-  let best: (THREE.Mesh | THREE.SkinnedMesh) | null = null;
-  let bestScore = -1;
-  root.traverse((o) => {
-    if (isRenderableMesh(o) && o.geometry) {
-      const geom = o.geometry as THREE.BufferGeometry;
-      const tri = Math.floor(
-        (geom.getIndex()?.count ?? geom.attributes.position?.count ?? 0) / 3
-      );
-      if (tri > bestScore) {
-        best = o;
-        bestScore = tri;
-      }
-    }
-  });
-  return best;
-}
-function findHipLikeNode(root: THREE.Object3D) {
-  let hit: THREE.Object3D | null = null;
-  const hipRegexes = [/^hips?$/i, /pelvis/i, /mixamorig[:]hips/i, /^root$/i, /spine_?0/i];
-  root.traverse((o) => {
-    if (hit) return;
-    const name = o.name || "";
-    const isBone = (o as any).isBone || o.type === "Bone";
-    if (isBone && /hips?|pelvis|root/i.test(name)) {
-      hit = o;
-      return;
-    }
-    if (hipRegexes.some((r) => r.test(name))) hit = o;
-  });
-  return hit;
-}
+// (removed unused findLargestMesh)
 
-function setMorphByNameSafe(
-  mesh: THREE.SkinnedMesh,
-  morphName: string,
-  value: number
-) {
-  const dict = mesh.morphTargetDictionary;
-  const infl = mesh.morphTargetInfluences;
-  if (!dict || !infl) return false;
-  const idx = dict[morphName];
-  if (idx !== undefined) {
-    infl[idx] = value;
-    return true;
-  }
-  return false;
-}
+// (removed unused setMorphByNameSafe)
 
 function applyColor(
   material: THREE.Material | THREE.Material[] | null | undefined,
@@ -157,6 +140,22 @@ function findMeshesByHeuristics(
     if (include.test(nm) && !exclude.test(nm)) hits.push(o);
   });
   return hits;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Morph selection helpers (avoid driving duplicate channels like endomorph.001)
+// ──────────────────────────────────────────────────────────────────────────────
+function pickBestMorph(keys: string[], exactName: string, altRegex: RegExp): string | null {
+  const exact = keys.find((n) => n.toLowerCase() === exactName);
+  if (exact) return exact;
+  // Prefer non-suffixed numbered variant first (e.g., 'endomorph' over 'endomorph.001')
+  const numbered = keys.filter((n) => new RegExp(`^${exactName}(?:\\.\\d+)?$`, 'i').test(n));
+  if (numbered.length) {
+    const noSuffix = numbered.find((n) => !/\.\d+$/.test(n));
+    return noSuffix ?? numbered.sort()[0];
+  }
+  const alt = keys.find((n) => altRegex.test(n));
+  return alt ?? null;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -240,75 +239,35 @@ function listEditableParts(root: THREE.Object3D) {
 // Domain-specific: SKIN & PANTS material application
 // ──────────────────────────────────────────────────────────────────────────────
 
-// Helper: get first colorable MeshStandardMaterial from a mesh
-function getFirstColorableMaterial(
-  mesh: (THREE.Mesh | THREE.SkinnedMesh) | null
-): THREE.MeshStandardMaterial | null {
-  if (!mesh || !mesh.material) return null;
-  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-  for (const m of mats) {
-    const std = m as THREE.MeshStandardMaterial;
-    if ((std as any).isMeshStandardMaterial && std.color instanceof THREE.Color) {
-      return std;
-    }
-  }
-  return null;
-}
+// (removed unused getFirstColorableMaterial helper)
 
 // NEW: colorize skin by REUSING the 'human' material instance everywhere
 function colorizeSkin(root: THREE.Object3D, color: string) {
-  const targets = findMeshesByHeuristics(root, SKIN_INCLUDE, SKIN_EXCLUDE);
+  const targets = findMeshesByHeuristics(root, SKIN_INCLUDE, SKIN_EXCLUDE) as (THREE.Mesh | THREE.SkinnedMesh)[];
   if (!targets.length) {
     warn("No SKIN-like meshes detected.");
     return;
   }
 
-  const human =
-    findMeshByName(root, /^human$/i) ||
-    findMeshByName(root, /character|avatar|body/i);
-
-  let baseMat = getFirstColorableMaterial(human);
-  if (!baseMat) baseMat = getFirstColorableMaterial(targets[0])!;
-
-  gStart("🧴 Apply Skin Material (shared)");
+  gStart("🧴 Apply Skin Material (per-mesh clones, keeping deform flags)");
   info("Skin meshes", targets.map((m) => m.name));
-  info("Using base material from", human?.name ?? "(first skin target)");
 
-  if (baseMat) {
-    // configure once
-    baseMat.color.set(color);
-    baseMat.metalness = 0.0;
-    baseMat.roughness = 0.65;
-    baseMat.needsUpdate = true;
-
-    // assign SAME instance to all skin meshes
     for (const mesh of targets) {
-      if (Array.isArray(mesh.material)) {
-        mesh.material = mesh.material.map(() => baseMat!);
-      } else {
-        mesh.material = baseMat;
-      }
-      (mesh.material as any).needsUpdate = true;
-    }
-  } else {
-    // Fallback: per-mesh tint
-    warn("No colorable MeshStandardMaterial found; tinting per mesh.");
-    for (const mesh of targets) {
-      ensureUniqueMaterial(mesh);
       const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      for (const m of mats) {
-        const std = m as THREE.MeshStandardMaterial;
-        if ((std as any).isMeshStandardMaterial) {
+    const newMats = mats.map((m) => {
+      const std = (m as THREE.MeshStandardMaterial).clone();
           std.color.set(color);
           std.metalness = 0.0;
           std.roughness = 0.65;
-          std.needsUpdate = true;
-        }
-      }
-    }
+      adoptDeformFlags(mesh, std);
+      return std;
+    });
+    mesh.material = Array.isArray(mesh.material) ? newMats : newMats[0];
   }
   gEnd();
 }
+
+// (helper inlined in the effect below to reduce bundle size)
 
 type PantsOpts = {
   color?: string;
@@ -349,6 +308,7 @@ function applyPantsMaterial(
         std.color.set("#ffffff");
         std.metalness = 0.0;
         std.roughness = 0.8;
+        adoptDeformFlags(mesh as any, std);
         std.needsUpdate = true;
       });
     }
@@ -366,6 +326,7 @@ function applyPantsMaterial(
         std.color.set(color);
         std.metalness = 0.05;
         std.roughness = 0.85;
+        adoptDeformFlags(mesh as any, std);
         std.needsUpdate = true;
       });
     }
@@ -390,16 +351,18 @@ function expand(
 // ──────────────────────────────────────────────────────────────────────────────
 /** Component */
 // ──────────────────────────────────────────────────────────────────────────────
-export default function Mannequin() {
+export default function Mannequin({ showClothes = true }: { showClothes?: boolean }) {
   // Known fields from your store
   const {
     gender,
-    morphs,
     heightScale,
     baseColor,
     shirtTexCanvas,
     shirtTexStamp,
     setUVRects,
+    bodyType,
+    bodyTypeIntensity,
+    garment,
   } = useDesign();
 
   // Optional fields (if present in store)
@@ -409,7 +372,7 @@ export default function Mannequin() {
   const pantsTexCanvas: HTMLCanvasElement | null = designAny.pantsTexCanvas ?? null;
   const pantsTexStamp: number | undefined = designAny.pantsTexStamp;
 
-  const url = gender === "male" ? "/models/male.glb" : "/models/female.glb";
+  const url = gender === "male" ? "/models/malev3.glb" : "/models/female.glb";
   const { scene } = useGLTF(url) as unknown as GLTFScene;
   const cloned = useMemo<THREE.Group>(
     () => SkeletonUtils.clone(scene) as THREE.Group,
@@ -433,8 +396,24 @@ export default function Mannequin() {
   }, [cloned]);
 
   useEffect(() => {
-    if (cloned) listEditableParts(cloned);
+    if (cloned) {
+      listEditableParts(cloned);
+      inspectModelMorphs(cloned);
+    }
   }, [cloned]);
+
+  // Toggle clothing visibility
+  useEffect(() => {
+    if (!cloned) return;
+    // Shirt
+    const tshirt =
+      findMeshByName(cloned, /^t[-\s_]?shirt$/i) ||
+      findMeshByName(cloned, /upper|top/i);
+    if (tshirt) (tshirt as THREE.Mesh).visible = showClothes;
+    // Pants
+    const pants = findMeshesByHeuristics(cloned, PANTS_INCLUDE, PANTS_EXCLUDE);
+    pants.forEach((p) => (p.visible = showClothes));
+  }, [cloned, showClothes]);
 
   // Apply shared skin material from 'human'
   useEffect(() => {
@@ -445,6 +424,7 @@ export default function Mannequin() {
   // Compute UV rects (shirt)
   useEffect(() => {
     if (!cloned) return;
+    if (!showClothes) return; // skip when clothes hidden
     const tshirt =
       findMeshByName(cloned, /^t[-\s_]?shirt$/i) ||
       findMeshByName(cloned, /upper|top/i);
@@ -498,11 +478,12 @@ export default function Mannequin() {
     };
     info("📐 UV rects (normalized)", rects);
     setUVRects(rects);
-  }, [cloned, setUVRects]);
+  }, [cloned, setUVRects, showClothes]);
 
   // Base shirt color when NO custom shirt texture is active
   useEffect(() => {
     if (!cloned || shirtTexCanvas) return;
+    if (!showClothes) return; // skip when clothes hidden
     const tshirt =
       findMeshByName(cloned, /^t[-\s_]?shirt$/i) ||
       findMeshByName(cloned, /upper|top/i);
@@ -511,28 +492,31 @@ export default function Mannequin() {
       return;
     }
 
-    ensureUniqueMaterial(tshirt);
+    const shirtMesh = tshirt as THREE.Mesh | THREE.SkinnedMesh;
+    ensureUniqueMaterial(shirtMesh);
     gStart("🎨 Apply Base Color → Shirt");
     info("Target Mesh", {
-      name: tshirt.name,
-      material: materialName(tshirt.material),
+      name: shirtMesh.name,
+      material: materialName(shirtMesh.material),
     });
     info("Color", baseColor);
 
-    const mats = Array.isArray(tshirt.material)
-      ? tshirt.material
-      : [tshirt.material];
-    mats.forEach((m) => {
+    const mats = Array.isArray(shirtMesh.material)
+      ? shirtMesh.material
+      : [shirtMesh.material];
+    mats.forEach((m: THREE.Material) => {
       const std = m as THREE.MeshStandardMaterial;
       std.map = null;
+      setClothOverlayBias(shirtMesh, m);
     });
-    applyColor(tshirt.material as any, baseColor);
+    applyColor(shirtMesh.material as any, baseColor);
     gEnd();
-  }, [cloned, baseColor, shirtTexCanvas]);
+  }, [cloned, baseColor, shirtTexCanvas, showClothes]);
 
   // Shirt: attach CanvasTexture once
   useEffect(() => {
     if (!cloned || !shirtTexCanvas) return;
+    if (!showClothes) return; // skip when clothes hidden
 
     const tshirt =
       findMeshByName(cloned, /^t[-\s_]?shirt$/i) ||
@@ -542,10 +526,11 @@ export default function Mannequin() {
       return;
     }
 
-    ensureUniqueMaterial(tshirt);
-    const mats = Array.isArray(tshirt.material)
-      ? tshirt.material
-      : [tshirt.material];
+    const shirtMesh = tshirt as THREE.Mesh | THREE.SkinnedMesh;
+    ensureUniqueMaterial(shirtMesh);
+    const mats = Array.isArray(shirtMesh.material)
+      ? shirtMesh.material
+      : [shirtMesh.material];
 
     if (!shirtTexRef.current) {
       shirtTexRef.current = new THREE.CanvasTexture(shirtTexCanvas);
@@ -555,41 +540,44 @@ export default function Mannequin() {
       shirtTexRef.current.needsUpdate = true;
 
       gStart("🖼️ Attach Shirt Texture (once)");
-      info("Target Mesh", { name: tshirt.name });
+      info("Target Mesh", { name: shirtMesh.name });
       info(
         "Materials",
-        mats.map((m) => ({ name: materialName(m), uuid: (m as any).uuid }))
+        mats.map((m: THREE.Material) => ({ name: materialName(m), uuid: (m as any).uuid }))
       );
       info("Atlas", {
         width: shirtTexCanvas.width,
         height: shirtTexCanvas.height,
       });
-      mats.forEach((m) => {
+      mats.forEach((m: THREE.Material) => {
         const std = m as THREE.MeshStandardMaterial;
         std.map = shirtTexRef.current!;
         std.color.set("#ffffff");
+        setClothOverlayBias(shirtMesh, m);
         std.needsUpdate = true;
       });
       gEnd();
     }
-  }, [cloned, shirtTexCanvas]);
+  }, [cloned, shirtTexCanvas, showClothes]);
 
   // Shirt: mark texture for update when atlas changes
   useEffect(() => {
+    if (!showClothes) return;
     if (shirtTexRef.current) {
       shirtTexRef.current.needsUpdate = true;
     }
-  }, [shirtTexStamp]);
+  }, [shirtTexStamp, showClothes]);
 
   // Pants: apply canvas or flat color
   useEffect(() => {
     if (!cloned) return;
+    if (!showClothes) return; // skip when clothes hidden
     applyPantsMaterial(
       cloned,
       { color: pantsColor, canvas: pantsTexCanvas, stamp: pantsTexStamp },
       pantsTexRef
     );
-  }, [cloned, pantsColor, pantsTexCanvas, pantsTexStamp]);
+  }, [cloned, showClothes, pantsColor, pantsTexCanvas, pantsTexStamp]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -601,51 +589,113 @@ export default function Mannequin() {
     };
   }, []);
 
-  // Morphs + height scale
+  // Morphs: discover handles once
+  const endoHandlesRef = useRef<Array<{ infl: number[]; index: number; meshName: string }>>([]);
+  const ectoHandlesRef = useRef<Array<{ infl: number[]; index: number; meshName: string }>>([]);
+  const mesoHandlesRef = useRef<Array<{ infl: number[]; index: number; meshName: string }>>([]);
+
   useEffect(() => {
     if (!cloned) return;
-    const body =
-      findMeshByName(cloned, /human|body|character|avatar/i) ||
-      findLargestMesh(cloned);
-    const shirt =
+    endoHandlesRef.current = [];
+    ectoHandlesRef.current = [];
+    mesoHandlesRef.current = [];
+    const uniqueMorphs = new Set<string>();
+    cloned.traverse((o) => {
+      const m = o as any;
+      if (!m.isMesh || !m.morphTargetDictionary || !m.morphTargetInfluences) return;
+      info("[morphs] " + (m.name || "(mesh)"));
+      const dict = m.morphTargetDictionary as Record<string, number>;
+      const keys = Object.keys(dict);
+      info(`• Shape keys on ${m.name || '(mesh)'}:`, keys);
+      keys.forEach((k) => uniqueMorphs.add(k));
+      const endoBest = pickBestMorph(keys, 'endomorph', /endo|belly|waist|abdomen|stomach|fat/i);
+      if (endoBest) {
+        (Array.isArray(m.material) ? m.material : [m.material]).forEach((mat: THREE.Material) => adoptDeformFlags(m, mat));
+        endoHandlesRef.current.push({ infl: m.morphTargetInfluences, index: dict[endoBest], meshName: m.name || '(mesh)' });
+        info(`↳ Endomorph handle on ${m.name}: index ${dict[endoBest]} (${endoBest})`)
+      }
+      const ectoBest = pickBestMorph(keys, 'ectomorph', /ecto|slim|thin/i);
+      if (ectoBest) {
+        (Array.isArray(m.material) ? m.material : [m.material]).forEach((mat: THREE.Material) => adoptDeformFlags(m, mat));
+        ectoHandlesRef.current.push({ infl: m.morphTargetInfluences, index: dict[ectoBest], meshName: m.name || '(mesh)' });
+        info(`↳ Ectomorph handle on ${m.name}: index ${dict[ectoBest]} (${ectoBest})`)
+      }
+      const mesoBest = pickBestMorph(keys, 'mesomorph', /meso|athletic|muscle/i);
+      if (mesoBest) {
+        (Array.isArray(m.material) ? m.material : [m.material]).forEach((mat: THREE.Material) => adoptDeformFlags(m, mat));
+        mesoHandlesRef.current.push({ infl: m.morphTargetInfluences, index: dict[mesoBest], meshName: m.name || '(mesh)' });
+        info(`↳ Mesomorph handle on ${m.name}: index ${dict[mesoBest]} (${mesoBest})`)
+      }
+    });
+    info('🧩 All unique shape keys found:', Array.from(uniqueMorphs).sort());
+    // zero all on discovery
+    endoHandlesRef.current.forEach((h) => (h.infl[h.index] = 0));
+    ectoHandlesRef.current.forEach((h) => (h.infl[h.index] = 0));
+    mesoHandlesRef.current.forEach((h) => (h.infl[h.index] = 0));
+  }, [cloned]);
+
+  // Drive morphs when slider/bodyType changes; also apply height scale
+  useEffect(() => {
+    if (!cloned) return;
+    const vEndo = bodyType === 'endomorph' ? THREE.MathUtils.clamp(bodyTypeIntensity, 0, 1) : 0;
+    const vEcto = bodyType === 'ectomorph' ? THREE.MathUtils.clamp(bodyTypeIntensity, 0, 1) : 0;
+    const vMeso = bodyType === 'mesomorph' ? THREE.MathUtils.clamp(bodyTypeIntensity, 0, 1) : 0;
+    endoHandlesRef.current.forEach((h) => (h.infl[h.index] = vEndo));
+    ectoHandlesRef.current.forEach((h) => (h.infl[h.index] = vEcto));
+    mesoHandlesRef.current.forEach((h) => (h.infl[h.index] = vMeso));
+    const sY = THREE.MathUtils.clamp(heightScale, 0.9, 1.2);
+    // For ectomorph, also slim X/Z proportionally for a visible effect
+    const hasMesoMorph = mesoHandlesRef.current.length > 0;
+    const widthFactor =
+      bodyType === 'ectomorph' ? (1 - 0.15 * vEcto) :
+      bodyType === 'mesomorph' && !hasMesoMorph ? (1 + 0.12 * vMeso) :
+      1; // mesomorph: prefer morph; fallback widen only if no morph exists
+    if (bodyType === 'mesomorph' && !hasMesoMorph && vMeso > 0) {
+      info('Mesomorph shape key not found. Using width scaling fallback.');
+    }
+    const sX = THREE.MathUtils.clamp(sY * widthFactor, 0.8, 1.3);
+    const sZ = THREE.MathUtils.clamp(sY * widthFactor, 0.8, 1.3);
+    cloned.scale.set(sX, sY, sZ);
+    cloned.updateMatrixWorld(true);
+
+    // Endomorph clothing fallback: if shirt has no endo morph and NOT morph-only, widen only the shirt mesh
+    if (bodyType === 'endomorph' && !garment?.useMorphOnly) {
+      const hasEndoOnShirt = endoHandlesRef.current.some((h) => /t[-\s_]?shirt/i.test(h.meshName));
+      if (!hasEndoOnShirt) {
+        const tshirt =
+          findMeshByName(cloned, /^t[-\s_]?shirt$/i) ||
+          findMeshByName(cloned, /shirt|upper|top/i);
+        if (tshirt) {
+          const mesh = tshirt as THREE.Mesh | THREE.SkinnedMesh;
+          const ud: any = (mesh as any).userData;
+          if (!ud.__baseScale) ud.__baseScale = mesh.scale.clone();
+          const widen = 1 + 0.12 * vEndo;
+          mesh.scale.set(ud.__baseScale.x * widen, ud.__baseScale.y, ud.__baseScale.z * widen);
+          mesh.updateMatrixWorld(true);
+        }
+      }
+    }
+
+    // Apply garment width/length adjustments unless user wants morphs-only (to match Blender)
+    const tshirt =
       findMeshByName(cloned, /^t[-\s_]?shirt$/i) ||
-      findMeshByName(cloned, /upper|top/i);
-
-    const targets: (THREE.Mesh | THREE.SkinnedMesh | null)[] = [body, shirt];
-    const MORPH_MAP = {
-      waist: "macrodetails-waist",
-      shoulder: "macrodetails-shoulder",
-      chest: "macrodetails-chest",
-      arms: "macrodetails-arms",
-    } as const;
-
-    gStart("🧬 Apply Morphs");
-    for (const t of targets) {
-      if (!t) continue;
-      const skinned = (t as any).isSkinnedMesh;
-      if (!skinned) continue;
-      const sm = t as THREE.SkinnedMesh;
-      setMorphByNameSafe(sm, MORPH_MAP.waist, morphs.waist);
-      setMorphByNameSafe(sm, MORPH_MAP.shoulder, morphs.shoulder);
-      setMorphByNameSafe(sm, MORPH_MAP.chest, morphs.chest);
-      setMorphByNameSafe(sm, MORPH_MAP.arms, morphs.arms);
-      sm.updateMorphTargets?.();
+      findMeshByName(cloned, /shirt|upper|top/i);
+    if (tshirt && garment && !garment.useMorphOnly) {
+      const mesh = tshirt as THREE.Mesh | THREE.SkinnedMesh;
+      const ud: any = (mesh as any).userData;
+      if (!ud.__gsBase) ud.__gsBase = mesh.scale.clone();
+      const styleFactor = garment.style === 'fit' ? 0.98 : garment.style === 'loose' ? 1.04 : 1.0;
+      const widthIn = garment.custom?.widthIn ?? 20;   // baseline M ~20in
+      const lengthIn = garment.custom?.lengthIn ?? 28; // baseline M ~28in
+      const widthScale = styleFactor * (widthIn / 20);
+      const lengthScale = (lengthIn / 28);
+      mesh.scale.set(ud.__gsBase.x * widthScale, ud.__gsBase.y * lengthScale, ud.__gsBase.z * widthScale);
+      mesh.updateMatrixWorld(true);
     }
-    gEnd();
-
-    const hipLike = findHipLikeNode(cloned);
-    const s = THREE.MathUtils.clamp(heightScale, 0.9, 1.2);
-    if (hipLike) {
-      hipLike.scale.setScalar(s);
-      hipLike.updateMatrixWorld(true);
-    } else {
-      cloned.scale.setScalar(s);
-      cloned.updateMatrixWorld(true);
-    }
-  }, [cloned, morphs, heightScale]);
+  }, [cloned, bodyType, bodyTypeIntensity, heightScale, garment]);
 
   return <primitive object={cloned} dispose={null} />;
 }
 
-useGLTF.preload("/models/male.glb");
+useGLTF.preload("/models/malev3.glb");
 useGLTF.preload("/models/female.glb");

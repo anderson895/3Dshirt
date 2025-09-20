@@ -26,7 +26,7 @@ type SelectableImageProps = {
 }
 
 function SelectableImage({ layer, selected, editingEnabled, onSelect, onChange, onDirty }: SelectableImageProps) {
-  const [img] = useImage(layer.src || '')
+  const [img] = useImage(layer.src || '', 'anonymous')
   const shapeRef = useRef<any>(null)
   const trRef = useRef<any>(null)
   const { updateLayer } = useDesign()
@@ -73,7 +73,7 @@ function SelectableImage({ layer, selected, editingEnabled, onSelect, onChange, 
         y={layer.y}
         scaleX={layer.scale}
         scaleY={layer.scale}
-        opacity={layer.opacity}
+        opacity={layer.opacity ?? 1}
         rotation={layer.rotation}
         draggable={editingEnabled}
         listening={editingEnabled}
@@ -143,7 +143,7 @@ function SelectableText({ layer, selected, editingEnabled, onSelect, onChange, o
         y={layer.y}
         fontSize={layer.size || 28}
         fill={layer.color || '#111'}
-        opacity={layer.opacity}
+        opacity={layer.opacity ?? 1}
         rotation={layer.rotation}
         draggable={editingEnabled}
         listening={editingEnabled}
