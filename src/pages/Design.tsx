@@ -69,9 +69,11 @@ export default function DesignPage() {
   const nav = useNavigate()
   const { addLayer, setShirtTexCanvas, bumpShirtTexStamp, baseColor, setBaseColor, layers, garment, setGarment } = useDesign()
   const [part, setPart] = useState<'front'|'back'|'sleeveL'|'sleeveR'>('front')
+  const [shapeKind, setShapeKind] = useState<'stripe'|'rect'|'circle'>('stripe')
 
   const [showGrid, setShowGrid] = useState(true)
   const [showSafe, setShowSafe] = useState(true)
+  const [drawMode, setDrawMode] = useState(false)
 
   const frontRef = useRef<PartCanvasHandle>(null)
   const backRef  = useRef<PartCanvasHandle>(null)
@@ -190,7 +192,7 @@ export default function DesignPage() {
 
         <div className="grid grid-cols-2 gap-x-6 gap-y-2 bg-gray-50 border rounded p-3">
           <Step n={1} label="Choose a part (Front, Back, Sleeves)" />
-          <Step n={2} label="Upload image or add text" />
+          <Step n={2} label="Upload image, add text, or add shapes" />
           <Step n={3} label="Drag/scale; use Fit/Center guides" />
           <Step n={4} label="Adjust shirt color & size; preview in 3D" />
         </div>
@@ -248,8 +250,35 @@ export default function DesignPage() {
           >
             Add Text
           </button>
+          <label className="inline-flex items-center gap-2">
+            <span>Shape</span>
+            <select className="border rounded px-2 py-1" value={shapeKind} onChange={(e)=>setShapeKind(e.target.value as any)}>
+              <option value="stripe">Stripe</option>
+              <option value="rect">Rectangle</option>
+              <option value="circle">Circle</option>
+            </select>
+          </label>
+          <button
+            className="px-3 py-1.5 border rounded hover:bg-gray-50"
+            title="Add selected shape"
+            onClick={() => {
+              const defaults: Record<'stripe'|'rect'|'circle', { x:number;y:number;rotation:number;w:number;h:number;fill:string }>= {
+                stripe: { x: 40, y: 120, rotation: -20, w: 420, h: 80, fill: '#6d28d9' },
+                rect:   { x: 120, y: 180, rotation: 0,   w: 260, h: 120, fill: '#111111' },
+                circle: { x: 180, y: 180, rotation: 0,   w: 160, h: 160, fill: '#ffffff' },
+              }
+              const d = defaults[shapeKind]
+              addLayer({ id: nanoid(), kind: 'shape', part, x: d.x, y: d.y, scale: 1, rotation: d.rotation, opacity: 1, shape: shapeKind, w: d.w, h: d.h, fill: d.fill, z: Date.now() })
+            }}
+          >
+            Add Shape
+          </button>
 
           <div className="ml-auto flex items-center gap-3">
+            <label className="inline-flex items-center gap-2 text-sm">
+              <input type="checkbox" className="accent-black" checked={drawMode} onChange={e=>setDrawMode(e.target.checked)} />
+              Freehand
+            </label>
             <label className="inline-flex items-center gap-2 text-sm">
               <input type="checkbox" className="accent-black" checked={showGrid} onChange={e=>setShowGrid(e.target.checked)} />
               Grid
@@ -308,7 +337,7 @@ export default function DesignPage() {
                 step={0.1}
                 className="w-full"
                 value={garment.custom?.widthIn ?? 20}
-                onChange={(e)=> setGarment({ custom: { ...(garment.custom ?? {}), widthIn: Number(e.target.value) } })}
+                onChange={(e)=> setGarment({ custom: { widthIn: Number(e.target.value), lengthIn: garment.custom?.lengthIn ?? 28, sleeveIn: garment.custom?.sleeveIn ?? 8 } })}
               />
             </div>
             <div>
@@ -323,7 +352,7 @@ export default function DesignPage() {
                 step={0.1}
                 className="w-full"
                 value={garment.custom?.lengthIn ?? 28}
-                onChange={(e)=> setGarment({ custom: { ...(garment.custom ?? {}), lengthIn: Number(e.target.value) } })}
+                onChange={(e)=> setGarment({ custom: { widthIn: garment.custom?.widthIn ?? 20, lengthIn: Number(e.target.value), sleeveIn: garment.custom?.sleeveIn ?? 8 } })}
               />
             </div>
           </div>
@@ -340,10 +369,10 @@ export default function DesignPage() {
         </details>
 
         <div className="grid grid-cols-2 gap-3">
-          <PartCanvas ref={frontRef} part="front"   onDirty={scheduleRebuild} showGrid={showGrid} showSafe={showSafe} />
-          <PartCanvas ref={backRef}  part="back"    onDirty={scheduleRebuild} showGrid={showGrid} showSafe={showSafe} />
-          <PartCanvas ref={slRef}    part="sleeveL" onDirty={scheduleRebuild} showGrid={showGrid} showSafe={showSafe} />
-          <PartCanvas ref={srRef}    part="sleeveR" onDirty={scheduleRebuild} showGrid={showGrid} showSafe={showSafe} />
+          <PartCanvas ref={frontRef} part="front"   onDirty={scheduleRebuild} showGrid={showGrid} showSafe={showSafe} drawMode={drawMode} />
+          <PartCanvas ref={backRef}  part="back"    onDirty={scheduleRebuild} showGrid={showGrid} showSafe={showSafe} drawMode={drawMode} />
+          <PartCanvas ref={slRef}    part="sleeveL" onDirty={scheduleRebuild} showGrid={showGrid} showSafe={showSafe} drawMode={drawMode} />
+          <PartCanvas ref={srRef}    part="sleeveR" onDirty={scheduleRebuild} showGrid={showGrid} showSafe={showSafe} drawMode={drawMode} />
         </div>
       </aside>
     </div>

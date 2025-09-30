@@ -111,7 +111,7 @@ export default forwardRef<SceneCanvasHandle, PropsWithChildren>(function SceneCa
       <ambientLight intensity={0.12} />
 
       {/* Specular environment for materials (not as background) */}
-      <Environment preset="studio" intensity={0.7} />
+      <Environment preset="studio" />
 
       <Ground />
 

@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 /* eslint-disable @typescript-eslint/no-unused-expressions */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* components/Three/Mannequin.tsx */
@@ -11,11 +12,19 @@ import { inspectModelMorphs } from "../../utils/modelInspector";
 
 type GLTFScene = { scene: THREE.Group };
 
+// Baseline measurements (cm) - gender-specific
+const getBaseMeasurements = (gender: 'male' | 'female') => ({
+  chestCm: gender === 'female' ? 86 : 96,
+  waistCm: gender === 'female' ? 70 : 82,
+  shouldersCm: gender === 'female' ? 40 : 46,
+  sleeveCm: gender === 'female' ? 58 : 60,
+});
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Name heuristics
 // ──────────────────────────────────────────────────────────────────────────────
 const SKIN_INCLUDE =
-  /(body|skin|head|face|neck|torso|arm|forearm|hand|leg|thigh|calf|foot|toe|ear)/i;
+  /(body|skin|head|face|neck|torso|arm|forearm|hand|leg|thigh|calf|foot|toe|ear|human)/i;
 const SKIN_EXCLUDE =
   /(shirt|short|pant|jean|trouser|cloth|garment|hair|brow|lash|eye|iris|pupil|teeth|tongue|gum|mouth|cap|hat|sock|shoe)/i;
 
@@ -137,7 +146,17 @@ function findMeshesByHeuristics(
   root.traverse((o) => {
     if (!isRenderableMesh(o)) return;
     const nm = nameWithMaterial(o);
-    if (include.test(nm) && !exclude.test(nm)) hits.push(o);
+    const includeMatch = include.test(nm);
+    const excludeMatch = exclude.test(nm);
+    
+    console.log(`🔍 Mesh "${o.name}": nameWithMaterial="${nm}", include=${includeMatch}, exclude=${excludeMatch}`);
+    
+    if (includeMatch && !excludeMatch) {
+      hits.push(o);
+      console.log(`✅ Added mesh "${o.name}" to hits`);
+    } else {
+      console.log(`❌ Skipped mesh "${o.name}" (include: ${includeMatch}, exclude: ${excludeMatch})`);
+    }
   });
   return hits;
 }
@@ -243,7 +262,23 @@ function listEditableParts(root: THREE.Object3D) {
 
 // NEW: colorize skin by REUSING the 'human' material instance everywhere
 function colorizeSkin(root: THREE.Object3D, color: string) {
+  // Debug: Log all meshes and their names for skin detection debugging
+  console.log(`🔍 SKIN DETECTION DEBUG:`);
+  console.log(`SKIN_INCLUDE pattern:`, SKIN_INCLUDE);
+  console.log(`SKIN_EXCLUDE pattern:`, SKIN_EXCLUDE);
+  
+  const allMeshes: (THREE.Mesh | THREE.SkinnedMesh)[] = [];
+  root.traverse((o) => {
+    if (o.type === 'Mesh' || o.type === 'SkinnedMesh') {
+      allMeshes.push(o as THREE.Mesh | THREE.SkinnedMesh);
+    }
+  });
+  
+  console.log(`All meshes found (${allMeshes.length}):`, allMeshes.map(m => m.name));
+  
   const targets = findMeshesByHeuristics(root, SKIN_INCLUDE, SKIN_EXCLUDE) as (THREE.Mesh | THREE.SkinnedMesh)[];
+  console.log(`Skin targets found (${targets.length}):`, targets.map(m => m.name));
+  
   if (!targets.length) {
     warn("No SKIN-like meshes detected.");
     return;
@@ -252,15 +287,45 @@ function colorizeSkin(root: THREE.Object3D, color: string) {
   gStart("🧴 Apply Skin Material (per-mesh clones, keeping deform flags)");
   info("Skin meshes", targets.map((m) => m.name));
 
-    for (const mesh of targets) {
-      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  // More flexible material detection for different model types
+  const TARGET_MATERIAL_PATTERNS = [
+    /^(SkinMaterial)$/i,           // Exact match
+    /skin/i,                       // Contains "skin"
+    /body/i,                       // Contains "body" 
+    /human/i,                      // Contains "human"
+    /flesh/i,                      // Contains "flesh"
+    /^Material$/i,                 // Generic "Material" name
+    /^Material\.001$/i,            // Specific "Material.001" name
+    /^.*Material$/i                // Ends with "Material"
+  ];
+
+  for (const mesh of targets) {
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     const newMats = mats.map((m) => {
-      const std = (m as THREE.MeshStandardMaterial).clone();
-          std.color.set(color);
-          std.metalness = 0.0;
-          std.roughness = 0.65;
-      adoptDeformFlags(mesh, std);
-      return std;
+      const src = m as THREE.MeshStandardMaterial;
+      const matName = src.name || materialName(src);
+      
+      // Special logging for Material.001
+      if (matName === 'Material.001') {
+        console.log(`🎯 FOUND Material.001 on mesh "${mesh.name}"!`);
+      }
+      
+      // Check if material matches any of our patterns
+      const shouldRecolor = TARGET_MATERIAL_PATTERNS.some(pattern => pattern.test(matName));
+      
+      if (shouldRecolor) {
+        console.log(`🎨 Recoloring material "${matName}" on mesh "${mesh.name}" to color ${color}`);
+        const std = src.clone();
+        std.color.set(color);
+        std.metalness = 0.0;
+        std.roughness = 0.65;
+        adoptDeformFlags(mesh, std);
+        return std;
+      } else {
+        console.log(`⏭️ Skipping material "${matName}" on mesh "${mesh.name}" (doesn't match skin patterns)`);
+        adoptDeformFlags(mesh, src);
+        return src;
+      }
     });
     mesh.material = Array.isArray(mesh.material) ? newMats : newMats[0];
   }
@@ -363,6 +428,7 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
     bodyType,
     bodyTypeIntensity,
     garment,
+    measurements,
   } = useDesign();
 
   // Optional fields (if present in store)
@@ -372,11 +438,12 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
   const pantsTexCanvas: HTMLCanvasElement | null = designAny.pantsTexCanvas ?? null;
   const pantsTexStamp: number | undefined = designAny.pantsTexStamp;
 
-  const url = gender === "male" ? "/models/malev3.glb" : "/models/female.glb";
+  // Load model based on gender selection
+  const url = gender === 'female' ? "/models/femalev1.glb" : "/models/malev4.glb";
   const { scene } = useGLTF(url) as unknown as GLTFScene;
   const cloned = useMemo<THREE.Group>(
     () => SkeletonUtils.clone(scene) as THREE.Group,
-    [scene]
+    [scene, gender]
   );
 
   // Persistent CanvasTextures
@@ -399,8 +466,188 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
     if (cloned) {
       listEditableParts(cloned);
       inspectModelMorphs(cloned);
+      
+      // Debug: Log all morph targets for the current gender
+      console.log(`🔍 Debugging morph targets for ${gender} model:`);
+      cloned.traverse((o) => {
+        const m = o as any;
+        if (m.isSkinnedMesh && m.morphTargetDictionary) {
+          const morphNames = Object.keys(m.morphTargetDictionary);
+          console.log(`Mesh "${m.name}":`, morphNames);
+          
+          // Look for waist-related morphs
+          const waistMorphs = morphNames.filter(name => 
+            /waist|abdomen|stomach|belly|hip/i.test(name)
+          );
+          if (waistMorphs.length > 0) {
+            console.log(`  🎯 Waist-related morphs found:`, waistMorphs);
+          }
+        }
+      });
+
+      // Comprehensive mesh analysis for female model
+      if (gender === 'female') {
+        console.group(`🔍 FEMALE MODEL - All Modifiable Meshes Analysis`);
+        
+        const allMeshes: Array<{
+          name: string;
+          type: 'Mesh' | 'SkinnedMesh';
+          hasMorphs: boolean;
+          morphCount: number;
+          morphNames: string[];
+          hasBones: boolean;
+          boneCount: number;
+          boneNames: string[];
+          vertexCount: number;
+          materialCount: number;
+          materialNames: string[];
+        }> = [];
+
+        const allBones: Array<{
+          name: string;
+          type: string;
+          hasChildren: boolean;
+          childCount: number;
+          childNames: string[];
+        }> = [];
+
+        // Analyze all meshes
+        cloned.traverse((o) => {
+          if (o.type === 'Mesh' || o.type === 'SkinnedMesh') {
+            const mesh = o as THREE.Mesh | THREE.SkinnedMesh;
+            const skinnedMesh = mesh as THREE.SkinnedMesh;
+            
+            const morphDict = skinnedMesh.morphTargetDictionary;
+            const morphNames = morphDict ? Object.keys(morphDict) : [];
+            
+            const skeleton = skinnedMesh.skeleton;
+            const bones = skeleton ? skeleton.bones : [];
+            const boneNames = bones.map(b => b.name);
+            
+            const geometry = mesh.geometry as THREE.BufferGeometry;
+            const positionAttr = geometry.attributes.position;
+            const vertexCount = positionAttr ? positionAttr.count : 0;
+            
+            const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+            const materialNames = materials.map(m => m.name || m.type || 'unnamed');
+            
+            allMeshes.push({
+              name: mesh.name || 'unnamed',
+              type: o.type as 'Mesh' | 'SkinnedMesh',
+              hasMorphs: morphNames.length > 0,
+              morphCount: morphNames.length,
+              morphNames,
+              hasBones: bones.length > 0,
+              boneCount: bones.length,
+              boneNames,
+              vertexCount,
+              materialCount: materials.length,
+              materialNames
+            });
+          }
+          
+          // Analyze bones
+          if (o.type === 'Bone' || (o as any).isBone) {
+            const bone = o as THREE.Bone;
+            allBones.push({
+              name: bone.name || 'unnamed',
+              type: o.type,
+              hasChildren: bone.children.length > 0,
+              childCount: bone.children.length,
+              childNames: bone.children.map(c => c.name || 'unnamed')
+            });
+          }
+        });
+
+        // Log mesh summary
+        console.log(`📊 MESH SUMMARY (${allMeshes.length} total):`);
+        console.table(allMeshes.map(m => ({
+          name: m.name,
+          type: m.type,
+          morphs: m.morphCount,
+          bones: m.boneCount,
+          vertices: m.vertexCount,
+          materials: m.materialCount
+        })));
+
+        // Log meshes with morph targets
+        const meshesWithMorphs = allMeshes.filter(m => m.hasMorphs);
+        console.log(`🎭 MESHES WITH MORPH TARGETS (${meshesWithMorphs.length}):`);
+        meshesWithMorphs.forEach(mesh => {
+          console.group(`📦 ${mesh.name} (${mesh.type})`);
+          console.log(`Morphs (${mesh.morphCount}):`, mesh.morphNames);
+          console.log(`Materials:`, mesh.materialNames);
+          console.log(`Vertices: ${mesh.vertexCount}`);
+          console.groupEnd();
+        });
+
+        // Log skinned meshes
+        const skinnedMeshes = allMeshes.filter(m => m.type === 'SkinnedMesh');
+        console.log(`🦴 SKINNED MESHES (${skinnedMeshes.length}):`);
+        skinnedMeshes.forEach(mesh => {
+          console.group(`🦴 ${mesh.name}`);
+          console.log(`Bones (${mesh.boneCount}):`, mesh.boneNames);
+          console.log(`Morphs: ${mesh.morphCount > 0 ? mesh.morphNames.join(', ') : 'none'}`);
+          console.groupEnd();
+        });
+
+        // Log bone hierarchy
+        console.log(`🦴 BONE HIERARCHY (${allBones.length} total):`);
+        console.table(allBones.map(b => ({
+          name: b.name,
+          type: b.type,
+          children: b.childCount,
+          childNames: b.childNames.join(', ')
+        })));
+
+        // Categorize meshes by body parts
+        const bodyPartCategories = {
+          skin: allMeshes.filter(m => /body|skin|head|face|neck|torso|arm|forearm|hand|leg|thigh|calf|foot|toe|ear/i.test(m.name)),
+          clothing: allMeshes.filter(m => /shirt|short|pant|jean|trouser|cloth|garment|dress|skirt|hood|sleeve|sock|shoe|boot/i.test(m.name)),
+          hair: allMeshes.filter(m => /hair|brow|lash/i.test(m.name)),
+          other: allMeshes.filter(m => !/body|skin|head|face|neck|torso|arm|forearm|hand|leg|thigh|calf|foot|toe|ear|shirt|short|pant|jean|trouser|cloth|garment|dress|skirt|hood|sleeve|sock|shoe|boot|hair|brow|lash/i.test(m.name))
+        };
+
+        // Special analysis for breast bones and their connected meshes
+        console.log(`🍑 BREAST BONE ANALYSIS:`);
+        const breastBones = allBones.filter(b => /breast/i.test(b.name));
+        if (breastBones.length > 0) {
+          breastBones.forEach(bone => {
+            console.group(`🍑 Breast bone: ${bone.name}`);
+            console.log(`Type: ${bone.type}`);
+            console.log(`Children: ${bone.childCount}`);
+            
+            // Find meshes that might be influenced by this bone
+            const relatedMeshes = allMeshes.filter(mesh => 
+              mesh.boneNames.some(boneName => boneName === bone.name)
+            );
+            console.log(`Connected meshes (${relatedMeshes.length}):`, relatedMeshes.map(m => m.name));
+            
+            if (relatedMeshes.length === 0) {
+              console.warn(`⚠️ No meshes found connected to breast bone "${bone.name}"`);
+              console.log(`Available bone names in meshes:`, allMeshes.flatMap(m => m.boneNames).filter(name => name));
+            }
+            console.groupEnd();
+          });
+        } else {
+          console.log(`No breast bones found in bone hierarchy`);
+        }
+
+        console.log(`🏷️ MESHES BY CATEGORY:`);
+        Object.entries(bodyPartCategories).forEach(([category, meshes]) => {
+          if (meshes.length > 0) {
+            console.group(`📂 ${category.toUpperCase()} (${meshes.length})`);
+            meshes.forEach(mesh => {
+              console.log(`• ${mesh.name} - ${mesh.type} - ${mesh.morphCount} morphs - ${mesh.boneCount} bones`);
+            });
+            console.groupEnd();
+          }
+        });
+
+        console.groupEnd();
+      }
     }
-  }, [cloned]);
+  }, [cloned, gender]);
 
   // Toggle clothing visibility
   useEffect(() => {
@@ -418,8 +665,25 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
   // Apply shared skin material from 'human'
   useEffect(() => {
     if (!cloned) return;
+    
+    // Debug: Log all materials in the model for skin color debugging
+    console.log(`🎨 SKIN COLOR DEBUG for ${gender} model:`);
+    cloned.traverse((o) => {
+      if (o.type === 'Mesh' || o.type === 'SkinnedMesh') {
+        const mesh = o as THREE.Mesh | THREE.SkinnedMesh;
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        materials.forEach((mat, index) => {
+          console.log(`Mesh "${mesh.name}" - Material ${index}:`, {
+            name: mat.name || 'unnamed',
+            type: mat.type,
+            color: (mat as THREE.MeshStandardMaterial).color?.getHexString() || 'no color'
+          });
+        });
+      }
+    });
+    
     colorizeSkin(cloned, skinColor);
-  }, [cloned, skinColor]);
+  }, [cloned, skinColor, gender]);
 
   // Compute UV rects (shirt)
   useEffect(() => {
@@ -593,12 +857,21 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
   const endoHandlesRef = useRef<Array<{ infl: number[]; index: number; meshName: string }>>([]);
   const ectoHandlesRef = useRef<Array<{ infl: number[]; index: number; meshName: string }>>([]);
   const mesoHandlesRef = useRef<Array<{ infl: number[]; index: number; meshName: string }>>([]);
+  // Region morphs (macrodetails-*): shoulders, chest, arms, waist
+  const chestHandlesRef = useRef<Array<{ infl: number[]; index: number; meshName: string }>>([]);
+  const waistHandlesRef = useRef<Array<{ infl: number[]; index: number; meshName: string }>>([]);
+  const shouldersHandlesRef = useRef<Array<{ infl: number[]; index: number; meshName: string }>>([]);
+  const armsHandlesRef = useRef<Array<{ infl: number[]; index: number; meshName: string }>>([]);
 
   useEffect(() => {
     if (!cloned) return;
     endoHandlesRef.current = [];
     ectoHandlesRef.current = [];
     mesoHandlesRef.current = [];
+    chestHandlesRef.current = [];
+    waistHandlesRef.current = [];
+    shouldersHandlesRef.current = [];
+    armsHandlesRef.current = [];
     const uniqueMorphs = new Set<string>();
     cloned.traverse((o) => {
       const m = o as any;
@@ -626,12 +899,39 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
         mesoHandlesRef.current.push({ infl: m.morphTargetInfluences, index: dict[mesoBest], meshName: m.name || '(mesh)' });
         info(`↳ Mesomorph handle on ${m.name}: index ${dict[mesoBest]} (${mesoBest})`)
       }
+
+      // Region morphs (macrodetails-*): look for common names with variations
+      const findMacro = (exact: string, alt: RegExp) => pickBestMorph(keys, exact, alt);
+      const chestName = findMacro('macrodetails-chest', /chest/i);
+      if (chestName) {
+        chestHandlesRef.current.push({ infl: m.morphTargetInfluences, index: dict[chestName], meshName: m.name || '(mesh)' });
+        info(`↳ Chest macro on ${m.name}: ${chestName}`);
+      }
+      const waistName = findMacro('macrodetails-waist', /waist|abdomen|stomach/i);
+      if (waistName) {
+        waistHandlesRef.current.push({ infl: m.morphTargetInfluences, index: dict[waistName], meshName: m.name || '(mesh)' });
+        info(`↳ Waist macro on ${m.name}: ${waistName}`);
+      }
+      const shouldersName = findMacro('macrodetails-shoulder', /shoulder|shoulders/i) || findMacro('macrodetails-shoulders', /shoulder|shoulders/i);
+      if (shouldersName) {
+        shouldersHandlesRef.current.push({ infl: m.morphTargetInfluences, index: dict[shouldersName], meshName: m.name || '(mesh)' });
+        info(`↳ Shoulders macro on ${m.name}: ${shouldersName}`);
+      }
+      const armsName = findMacro('macrodetails-arms', /arm|arms/i);
+      if (armsName) {
+        armsHandlesRef.current.push({ infl: m.morphTargetInfluences, index: dict[armsName], meshName: m.name || '(mesh)' });
+        info(`↳ Arms macro on ${m.name}: ${armsName}`);
+      }
     });
     info('🧩 All unique shape keys found:', Array.from(uniqueMorphs).sort());
     // zero all on discovery
     endoHandlesRef.current.forEach((h) => (h.infl[h.index] = 0));
     ectoHandlesRef.current.forEach((h) => (h.infl[h.index] = 0));
     mesoHandlesRef.current.forEach((h) => (h.infl[h.index] = 0));
+    chestHandlesRef.current.forEach((h) => (h.infl[h.index] = 0));
+    waistHandlesRef.current.forEach((h) => (h.infl[h.index] = 0));
+    shouldersHandlesRef.current.forEach((h) => (h.infl[h.index] = 0));
+    armsHandlesRef.current.forEach((h) => (h.infl[h.index] = 0));
   }, [cloned]);
 
   // Drive morphs when slider/bodyType changes; also apply height scale
@@ -640,10 +940,20 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
     const vEndo = bodyType === 'endomorph' ? THREE.MathUtils.clamp(bodyTypeIntensity, 0, 1) : 0;
     const vEcto = bodyType === 'ectomorph' ? THREE.MathUtils.clamp(bodyTypeIntensity, 0, 1) : 0;
     const vMeso = bodyType === 'mesomorph' ? THREE.MathUtils.clamp(bodyTypeIntensity, 0, 1) : 0;
-    endoHandlesRef.current.forEach((h) => (h.infl[h.index] = vEndo));
-    ectoHandlesRef.current.forEach((h) => (h.infl[h.index] = vEcto));
-    mesoHandlesRef.current.forEach((h) => (h.infl[h.index] = vMeso));
-    const sY = THREE.MathUtils.clamp(heightScale, 0.9, 1.2);
+    if (endoHandlesRef.current.length > 0) {
+      console.log(`🏃 Applying ENDOMORPH morphs (${endoHandlesRef.current.length} handles) with intensity ${vEndo.toFixed(3)}:`, endoHandlesRef.current.map(h => h.meshName));
+      endoHandlesRef.current.forEach((h) => (h.infl[h.index] = vEndo));
+    }
+    if (ectoHandlesRef.current.length > 0) {
+      console.log(`🏃 Applying ECTOMORPH morphs (${ectoHandlesRef.current.length} handles) with intensity ${vEcto.toFixed(3)}:`, ectoHandlesRef.current.map(h => h.meshName));
+      ectoHandlesRef.current.forEach((h) => (h.infl[h.index] = vEcto));
+    }
+    if (mesoHandlesRef.current.length > 0) {
+      console.log(`🏃 Applying MESOMORPH morphs (${mesoHandlesRef.current.length} handles) with intensity ${vMeso.toFixed(3)}:`, mesoHandlesRef.current.map(h => h.meshName));
+      mesoHandlesRef.current.forEach((h) => (h.infl[h.index] = vMeso));
+    }
+    // Support 130–200 cm (baseline 175 cm ≈ scale 0.74–1.15)
+    const sY = THREE.MathUtils.clamp(heightScale, 0.74, 1.2);
     // For ectomorph, also slim X/Z proportionally for a visible effect
     const hasMesoMorph = mesoHandlesRef.current.length > 0;
     const widthFactor =
@@ -655,6 +965,7 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
     }
     const sX = THREE.MathUtils.clamp(sY * widthFactor, 0.8, 1.3);
     const sZ = THREE.MathUtils.clamp(sY * widthFactor, 0.8, 1.3);
+    console.log(`📏 Scaling entire model: X=${sX.toFixed(3)}, Y=${sY.toFixed(3)}, Z=${sZ.toFixed(3)} (heightScale=${heightScale.toFixed(3)}, widthFactor=${widthFactor.toFixed(3)})`);
     cloned.scale.set(sX, sY, sZ);
     cloned.updateMatrixWorld(true);
 
@@ -670,6 +981,7 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
           const ud: any = (mesh as any).userData;
           if (!ud.__baseScale) ud.__baseScale = mesh.scale.clone();
           const widen = 1 + 0.12 * vEndo;
+          console.log(`👕 Scaling SHIRT mesh "${mesh.name}" for endomorph: widen=${widen.toFixed(3)} (X=${(ud.__baseScale.x * widen).toFixed(3)}, Z=${(ud.__baseScale.z * widen).toFixed(3)})`);
           mesh.scale.set(ud.__baseScale.x * widen, ud.__baseScale.y, ud.__baseScale.z * widen);
           mesh.updateMatrixWorld(true);
         }
@@ -685,17 +997,151 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
       const ud: any = (mesh as any).userData;
       if (!ud.__gsBase) ud.__gsBase = mesh.scale.clone();
       const styleFactor = garment.style === 'fit' ? 0.98 : garment.style === 'loose' ? 1.04 : 1.0;
-      const widthIn = garment.custom?.widthIn ?? 20;   // baseline M ~20in
-      const lengthIn = garment.custom?.lengthIn ?? 28; // baseline M ~28in
+      // Map presets to typical measurements if custom is not set
+      const presetToIn: Record<'S'|'M'|'L'|'XL', { widthIn:number; lengthIn:number }> = {
+        S:  { widthIn: 19, lengthIn: 27 },
+        M:  { widthIn: 20, lengthIn: 28 },
+        L:  { widthIn: 22, lengthIn: 29 },
+        XL: { widthIn: 24, lengthIn: 31 },
+      };
+      const preset = (garment.preset ?? 'M') as 'S'|'M'|'L'|'XL';
+      const fromPreset = presetToIn[preset];
+      const widthIn = garment.custom?.widthIn ?? fromPreset.widthIn;   // baseline by size
+      const lengthIn = garment.custom?.lengthIn ?? fromPreset.lengthIn; // baseline by size
       const widthScale = styleFactor * (widthIn / 20);
       const lengthScale = (lengthIn / 28);
+      console.log(`👔 Scaling GARMENT mesh "${mesh.name}": widthScale=${widthScale.toFixed(3)}, lengthScale=${lengthScale.toFixed(3)} (style=${garment.style}, preset=${garment.preset})`);
       mesh.scale.set(ud.__gsBase.x * widthScale, ud.__gsBase.y * lengthScale, ud.__gsBase.z * widthScale);
       mesh.updateMatrixWorld(true);
     }
   }, [cloned, bodyType, bodyTypeIntensity, heightScale, garment]);
 
+  // ──────────────────────────────────────────────────────────────────────────────
+  // Fallback body-region scaling (when per-area morphs are unavailable)
+  // Drives chest/waist/shoulders/arms length using bone scale heuristics
+  // ──────────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!cloned) return;
+    const hasRegionMorphs =
+      chestHandlesRef.current.length +
+      waistHandlesRef.current.length +
+      shouldersHandlesRef.current.length +
+      armsHandlesRef.current.length > 0;
+    if (hasRegionMorphs) return; // skip fallback when proper morphs exist
+
+    // Heuristic bone finders
+    const allBones: THREE.Bone[] = [] as any;
+    cloned.traverse((o) => { if ((o as any).isBone) allBones.push(o as THREE.Bone); });
+    const findBones = (rx: RegExp) => allBones.filter(b => rx.test(b.name || ""));
+
+    // For female model, use only breast bones for chest scaling
+    const chestBones = gender === 'female' 
+      ? findBones(/breastL|breastR/i)
+      : findBones(/upper.?chest|chest|spine.?2|spine.?03/i);
+    // For female model, use pelvis bones and lower spine for waist (more anatomically correct)
+    const waistBones = gender === 'female' 
+      ? findBones(/pelvisL|pelvisR|spine04|spine05|abdomen|stomach|waist|hips?/i)
+      : findBones(/spine(?!.*\d)|abdomen|stomach|waist|hips?/i);
+    const shoulderBones = findBones(/clavicle|shoulder(?!.*blade)/i);
+    const upperArms = findBones(/upper.?arm|arm\.L|arm\.R/i);
+    const foreArms = findBones(/lower.?arm|fore.?arm/i);
+
+    // Debug: Log detected bones for each body part
+    console.log(`🔍 BONE DETECTION for ${gender} model:`);
+    console.log(`Chest bones (${chestBones.length}):`, chestBones.map(b => b.name));
+    console.log(`Waist bones (${waistBones.length}):`, waistBones.map(b => b.name));
+    console.log(`Shoulder bones (${shoulderBones.length}):`, shoulderBones.map(b => b.name));
+    console.log(`Upper arm bones (${upperArms.length}):`, upperArms.map(b => b.name));
+    console.log(`Forearm bones (${foreArms.length}):`, foreArms.map(b => b.name));
+
+    const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x));
+    const baseMeas = getBaseMeasurements(gender);
+    const fChest = clamp(measurements.chestCm / baseMeas.chestCm, 0.85, 1.15);
+    const fWaist = clamp(measurements.waistCm / baseMeas.waistCm, 0.85, 1.15);
+    const fShoulders = clamp(measurements.shouldersCm / baseMeas.shouldersCm, 0.9, 1.15);
+    const fArms = clamp(measurements.sleeveCm / baseMeas.sleeveCm, 0.9, 1.15);
+
+    const setScaleX = (bones: THREE.Bone[], factor: number, key: string) => {
+      bones.forEach((b) => {
+        const ud: any = (b as any).userData;
+        if (!ud[key]) ud[key] = { x: b.scale.x, y: b.scale.y, z: b.scale.z };
+        
+        // Special handling for breast bones - scale all axes for more visible effect
+        if (b.name && /breast/i.test(b.name)) {
+          console.log(`🍑 Scaling BREAST bone "${b.name}" by factor ${factor.toFixed(3)} on all axes`);
+          b.scale.set(ud[key].x * factor, ud[key].y * factor, ud[key].z * factor);
+        } else {
+          b.scale.set(ud[key].x * factor, b.scale.y, b.scale.z);
+        }
+        b.updateMatrixWorld(true);
+      });
+    };
+    const setScaleY = (bones: THREE.Bone[], factor: number, key: string) => {
+      bones.forEach((b) => {
+        const ud: any = (b as any).userData;
+        if (!ud[key]) ud[key] = { x: b.scale.x, y: b.scale.y, z: b.scale.z };
+        b.scale.set(b.scale.x, ud[key].y * factor, b.scale.z);
+        b.updateMatrixWorld(true);
+      });
+    };
+
+    if (chestBones.length) {
+      console.log(`🦴 Scaling CHEST bones (${chestBones.length} bones) by factor ${fChest.toFixed(3)}:`, chestBones.map(b => b.name));
+      setScaleX(chestBones, fChest, "__baseScaleChest");
+    }
+    if (waistBones.length) {
+      console.log(`🦴 Scaling WAIST bones (${waistBones.length} bones) by factor ${fWaist.toFixed(3)}:`, waistBones.map(b => b.name));
+      setScaleX(waistBones, fWaist, "__baseScaleWaist");
+    }
+    if (shoulderBones.length) {
+      console.log(`🦴 Scaling SHOULDER bones (${shoulderBones.length} bones) by factor ${fShoulders.toFixed(3)}:`, shoulderBones.map(b => b.name));
+      setScaleX(shoulderBones, fShoulders, "__baseScaleShoulder");
+    }
+    if (upperArms.length) {
+      console.log(`🦴 Scaling UPPER ARM bones (${upperArms.length} bones) by factor ${fArms.toFixed(3)}:`, upperArms.map(b => b.name));
+      setScaleY(upperArms, fArms, "__baseScaleUpperArm");
+    }
+    if (foreArms.length) {
+      console.log(`🦴 Scaling FORE ARM bones (${foreArms.length} bones) by factor ${fArms.toFixed(3)}:`, foreArms.map(b => b.name));
+      setScaleY(foreArms, fArms, "__baseScaleForeArm");
+    }
+
+    cloned.updateMatrixWorld(true);
+  }, [cloned, measurements]);
+
+  // ──────────────────────────────────────────────────────────────────────────────
+  // Drive region morphs from measurements (cm)
+  // Maps deltas from BASE_MEAS into 0..1 morph influences
+  // ──────────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!cloned) return;
+    const baseMeas = getBaseMeasurements(gender);
+    const delta = {
+      chest: THREE.MathUtils.clamp((measurements.chestCm - baseMeas.chestCm) / 25, 0, 1),
+      waist: THREE.MathUtils.clamp((measurements.waistCm - baseMeas.waistCm) / 25, 0, 1),
+      shoulders: THREE.MathUtils.clamp((measurements.shouldersCm - baseMeas.shouldersCm) / 12, 0, 1),
+      arms: THREE.MathUtils.clamp((measurements.sleeveCm - baseMeas.sleeveCm) / 8, 0, 1),
+    };
+    if (chestHandlesRef.current.length > 0) {
+      console.log(`🎭 Applying CHEST morphs (${chestHandlesRef.current.length} handles) with delta ${delta.chest.toFixed(3)}:`, chestHandlesRef.current.map(h => h.meshName));
+      chestHandlesRef.current.forEach((h) => (h.infl[h.index] = delta.chest));
+    }
+    if (waistHandlesRef.current.length > 0) {
+      console.log(`🎭 Applying WAIST morphs (${waistHandlesRef.current.length} handles) with delta ${delta.waist.toFixed(3)}:`, waistHandlesRef.current.map(h => h.meshName));
+      waistHandlesRef.current.forEach((h) => (h.infl[h.index] = delta.waist));
+    }
+    if (shouldersHandlesRef.current.length > 0) {
+      console.log(`🎭 Applying SHOULDER morphs (${shouldersHandlesRef.current.length} handles) with delta ${delta.shoulders.toFixed(3)}:`, shouldersHandlesRef.current.map(h => h.meshName));
+      shouldersHandlesRef.current.forEach((h) => (h.infl[h.index] = delta.shoulders));
+    }
+    if (armsHandlesRef.current.length > 0) {
+      console.log(`🎭 Applying ARMS morphs (${armsHandlesRef.current.length} handles) with delta ${delta.arms.toFixed(3)}:`, armsHandlesRef.current.map(h => h.meshName));
+      armsHandlesRef.current.forEach((h) => (h.infl[h.index] = delta.arms));
+    }
+  }, [cloned, measurements, gender]);
+
   return <primitive object={cloned} dispose={null} />;
 }
 
-useGLTF.preload("/models/malev3.glb");
-useGLTF.preload("/models/female.glb");
+useGLTF.preload("/models/malev4.glb");
+useGLTF.preload("/models/femalev1.glb");

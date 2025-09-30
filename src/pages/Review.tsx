@@ -1,5 +1,5 @@
 import Mannequin from '../components/Three/Mannequin'
-import SceneCanvas, { SceneCanvasHandle } from '../components/Three/SceneCanva'
+import SceneCanvas, { type SceneCanvasHandle } from '../components/Three/SceneCanva'
 import { useDesign } from '../store/designStore'
 import { computeFit } from '../utils/fit'
 import { useCallback, useRef } from 'react'
@@ -34,7 +34,8 @@ export default function Review() {
     ctx.drawImage(img, 0, 0)
     ctx.fillStyle = '#ffffff'
     ctx.font = '16px sans-serif'
-    const text = `H ${measurements.heightCm.toFixed(0)}cm • C ${measurements.chestCm.toFixed(0)}cm • W ${measurements.waistCm.toFixed(0)}cm • S ${measurements.shouldersCm.toFixed(0)}cm • Fit ${garment.style}`
+    const sz = garment.preset ? `Size ${garment.preset}` : `${(garment.custom?.widthIn??20).toFixed(1)}×${(garment.custom?.lengthIn??28).toFixed(1)} in`
+    const text = `H ${measurements.heightCm.toFixed(0)}cm • C ${measurements.chestCm.toFixed(0)}cm • W ${measurements.waistCm.toFixed(0)}cm • S ${measurements.shouldersCm.toFixed(0)}cm • Garment ${sz} • Fit ${garment.style}`
     ctx.fillText(text, 16, h + Math.floor(footerH * 0.6))
 
     const blob = await new Promise<Blob | null>((resolve) => out.toBlob((b) => resolve(b), 'image/png'))
@@ -85,7 +86,10 @@ export default function Review() {
     const parts: Array<'front'|'back'|'sleeveL'|'sleeveR'> = ['front','back','sleeveL','sleeveR']
     for (const p of parts) {
       const blob = await sliceAtlasPart(p)
-      if (blob) downloadBlob(blob, `shirt-${p}.png`)
+      if (blob) {
+        const sizeLabel = garment.preset ? garment.preset : `${(garment.custom?.widthIn??20).toFixed(0)}x${(garment.custom?.lengthIn??28).toFixed(0)}in`
+        downloadBlob(blob, `shirt-${p}-${sizeLabel}.png`)
+      }
     }
   }, [shirtTexCanvas, sliceAtlasPart])
 
@@ -119,7 +123,8 @@ export default function Review() {
         if (i > 0) doc.addPage()
         // Simple layout: title + square image centered
         doc.setFontSize(14)
-        doc.text(`T‑Shirt Design – ${label}`, 105, 18, { align: 'center' })
+        const sz = garment.preset ? `Size ${garment.preset}` : `${(garment.custom?.widthIn??20).toFixed(1)}×${(garment.custom?.lengthIn??28).toFixed(1)} in`
+        doc.text(`T‑Shirt Design – ${label} – ${sz}`, 105, 18, { align: 'center' })
         const pageW = doc.internal.pageSize.getWidth()
         const maxW = pageW - 30 // 15mm margins
         const size = Math.min(maxW, 170)
@@ -143,60 +148,97 @@ export default function Review() {
         </SceneCanvas>
       </div>
       <aside className="p-5 space-y-5 bg-white">
-        <header className="space-y-1">
-          <h2 className="font-semibold text-lg">Step 3 · Review & Export</h2>
-          <p className="text-xs text-gray-500">Preview your design on the mannequin, check fit, and download.</p>
-        </header>
+		<header className="space-y-3">
+			<div className="rounded-xl border bg-gradient-to-r from-indigo-600 via-purple-600 to-fuchsia-600 p-4 text-white shadow">
+				<div className="flex items-center justify-between gap-3">
+					<h2 className="font-semibold text-lg">Step 3 · Review & Export</h2>
+					<div className="hidden sm:flex items-center gap-1">
+						<span className="px-2 py-1 text-[11px] rounded-full bg-white/15 border border-white/20">1 · Customize</span>
+						<span className="px-2 py-1 text-[11px] rounded-full bg-white/15 border border-white/20">2 · Design</span>
+						<span className="px-2 py-1 text-[11px] rounded-full bg-white text-black border border-white/20">3 · Review</span>
+					</div>
+				</div>
+				<p className="text-xs text-white/90 mt-1">Preview your design, check fit, and export assets.</p>
+			</div>
+		</header>
 
-        <div className="grid sm:grid-cols-2 gap-4">
-          <section className="rounded border p-4 space-y-3">
-            <h3 className="font-medium">Full Picture</h3>
-            <p className="text-sm text-gray-600">Downloads a photo of the 3D mannequin with your shirt and sizes in the footer.</p>
-            <button
-              onClick={handleDownloadPicture}
-              className="w-full px-3 py-2 rounded bg-black text-white"
-            >
-              Download Picture (PNG)
-            </button>
-          </section>
+		<section className="rounded-xl border p-4 space-y-3 bg-white/60 backdrop-blur">
+			<h3 className="font-medium">Exports</h3>
+			<p className="text-sm text-gray-600">Grab a polished snapshot or production-ready files.</p>
+			<div className="grid sm:grid-cols-3 gap-2">
+				<button
+					onClick={handleDownloadPicture}
+					className="px-3 py-2 rounded-md bg-black text-white flex items-center justify-center gap-2 hover:opacity-90 active:opacity-80"
+					title="Download a picture of the 3D view"
+				>
+					<span>📸</span>
+					<span>Picture (PNG)</span>
+				</button>
+				<button
+					onClick={handleDownloadPNGs}
+					disabled={!hasAtlas}
+					className={`px-3 py-2 rounded-md flex items-center justify-center gap-2 ${hasAtlas ? 'bg-gray-900 text-white hover:opacity-90 active:opacity-80' : 'bg-gray-200 text-gray-500 cursor-not-allowed'}`}
+					title="Download all flat slices (Front/Back/Sleeves)"
+				>
+					<span>🖼️</span>
+					<span>All PNGs</span>
+				</button>
+				<button
+					onClick={handleDownloadPDF}
+					disabled={!hasAtlas}
+					className={`px-3 py-2 rounded-md flex items-center justify-center gap-2 ${hasAtlas ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-gray-200 text-gray-500 cursor-not-allowed'}`}
+					title="Export an A4 PDF with each part"
+				>
+					<span>📄</span>
+					<span>PDF</span>
+				</button>
+			</div>
+			{!hasAtlas && (
+				<p className="text-[11px] text-red-600">No design atlas yet — open Design and add any element.</p>
+			)}
+		</section>
 
-          <section className="rounded border p-4 space-y-3">
-            <h3 className="font-medium">Front / Back Design</h3>
-            <p className="text-sm text-gray-600">Downloads the flat design slices from the atlas.</p>
-            {!hasAtlas && (
-              <p className="text-xs text-red-600">No design atlas yet — make an edit in Design.</p>
-            )}
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={async()=>{ const b = await sliceAtlasPart('front'); if (b) downloadBlob(b, 'shirt-front.png') }}
-                disabled={!hasAtlas}
-                className={`px-3 py-2 rounded ${hasAtlas ? 'bg-gray-900 text-white' : 'bg-gray-200 text-gray-500 cursor-not-allowed'}`}
-              >
-                Front PNG
-              </button>
-              <button
-                onClick={async()=>{ const b = await sliceAtlasPart('back'); if (b) downloadBlob(b, 'shirt-back.png') }}
-                disabled={!hasAtlas}
-                className={`px-3 py-2 rounded ${hasAtlas ? 'bg-gray-900 text-white' : 'bg-gray-200 text-gray-500 cursor-not-allowed'}`}
-              >
-                Back PNG
-              </button>
-            </div>
-            <p className="text-[11px] text-gray-500">Sleeve downloads can be added if needed.</p>
-          </section>
-        </div>
+		<section className="rounded-xl border p-4 space-y-3">
+			<h3 className="font-medium">Fit Status</h3>
+			<div className="flex items-center gap-2">
+				<span className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm ${fit.status==='Perfect Fit'?'bg-green-100 text-green-700': fit.status==='Too Tight'?'bg-red-100 text-red-700':'bg-yellow-100 text-yellow-700'}`}>
+					<span className="h-2 w-2 rounded-full bg-current" />
+					{fit.status}
+				</span>
+				<span className="text-xs text-gray-500">Style: {garment.style}</span>
+			</div>
+			<ul className="text-sm text-gray-700 grid grid-cols-3 gap-2">
+				<li className="rounded border p-2 text-center"><div className="text-[11px] text-gray-500">Chest diff</div><div className="font-semibold">{fit.diffChest.toFixed(1)} cm</div></li>
+				<li className="rounded border p-2 text-center"><div className="text-[11px] text-gray-500">Waist diff</div><div className="font-semibold">{fit.diffWaist.toFixed(1)} cm</div></li>
+				<li className="rounded border p-2 text-center"><div className="text-[11px] text-gray-500">Shoulders diff</div><div className="font-semibold">{fit.diffShoulders.toFixed(1)} cm</div></li>
+			</ul>
+		</section>
 
-        <section className="rounded border p-4 space-y-2">
-          <h3 className="font-medium">Fit Status</h3>
-          <div>
-            <span className={`px-2 py-1 rounded ${fit.status==='Perfect Fit'?'bg-green-100 text-green-700': fit.status==='Too Tight'?'bg-red-100 text-red-700':'bg-yellow-100 text-yellow-700'}`}>{fit.status}</span>
-          </div>
-          <ul className="text-sm text-gray-700 space-y-1">
-            <li>Chest diff: {fit.diffChest.toFixed(1)} cm</li>
-            <li>Waist diff: {fit.diffWaist.toFixed(1)} cm</li>
-            <li>Shoulders diff: {fit.diffShoulders.toFixed(1)} cm</li>
-          </ul>
-        </section>
+		<section className="rounded-xl border p-4 space-y-3">
+			<h3 className="font-medium">Your Customizations</h3>
+			<div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+				<div className="rounded-lg border p-3 text-center">
+					<div className="text-[11px] text-gray-500">Height</div>
+					<div className="text-lg font-semibold">{measurements.heightCm.toFixed(0)} cm</div>
+				</div>
+				<div className="rounded-lg border p-3 text-center">
+					<div className="text-[11px] text-gray-500">Chest</div>
+					<div className="text-lg font-semibold">{measurements.chestCm.toFixed(0)} cm</div>
+				</div>
+				<div className="rounded-lg border p-3 text-center">
+					<div className="text-[11px] text-gray-500">Waist</div>
+					<div className="text-lg font-semibold">{measurements.waistCm.toFixed(0)} cm</div>
+				</div>
+				<div className="rounded-lg border p-3 text-center">
+					<div className="text-[11px] text-gray-500">Shoulders</div>
+					<div className="text-lg font-semibold">{measurements.shouldersCm.toFixed(0)} cm</div>
+				</div>
+				<div className="rounded-lg border p-3 text-center">
+					<div className="text-[11px] text-gray-500">Arms (sleeve)</div>
+					<div className="text-lg font-semibold">{measurements.sleeveCm.toFixed(0)} cm</div>
+				</div>
+			</div>
+		</section>
       </aside>
     </div>
   )

@@ -13,7 +13,7 @@ export type GarmentConfig = { preset?: 'S'|'M'|'L'|'XL'; custom?: { widthIn: num
 
 export type Layer = {
   id: string
-  kind: 'image' | 'text'
+  kind: 'image' | 'text' | 'shape' | 'path'
   part: ShirtPart
   x: number
   y: number
@@ -26,6 +26,16 @@ export type Layer = {
   color?: string
   src?: string
   fitOnLoad?: boolean
+  // Shape-specific fields
+  shape?: 'rect' | 'stripe' | 'circle'
+  w?: number
+  h?: number
+  fill?: string
+  stroke?: string
+  strokeWidth?: number
+  // Path-specific fields (freehand)
+  points?: number[]
+  closed?: boolean
   z: number
 }
 
@@ -45,6 +55,10 @@ export type DesignState = {
 
   baseColor: string
   setBaseColor: (hex: string) => void
+
+  // New: skin color customization
+  skinColor: string
+  setSkinColor: (hex: string) => void
 
   shirtTexCanvas: HTMLCanvasElement | null
   shirtTexStamp: number
@@ -75,11 +89,15 @@ export const useDesign = create<DesignState>((set) => ({
   morphs: { height: 0.5, waist: 0.5, shoulder: 0.5, chest: 0.5, arms: 0.5 },
   heightScale: 1.0,
   measurements: { heightCm: 175, chestCm: 96, waistCm: 82, shouldersCm: 46, sleeveCm: 60 },
-  garment: { style: 'regular', preset: 'M', useMorphOnly: true },
+  garment: { style: 'regular', preset: 'M', useMorphOnly: false },
   layers: [],
 
   baseColor: '#b91c1c',
   setBaseColor: (hex) => set({ baseColor: hex }),
+
+  // Default skin tone and setter
+  skinColor: '#e6c8b5',
+  setSkinColor: (hex) => set({ skinColor: hex }),
 
   shirtTexCanvas: null,
   shirtTexStamp: 0,
@@ -94,7 +112,17 @@ export const useDesign = create<DesignState>((set) => ({
   },
   setUVRects: (rects) => set((s) => ({ uvRects: { ...s.uvRects, ...rects } })),
 
-  setGender: (gender) => set({ gender }),
+  setGender: (gender) => set((state) => {
+    // Update measurements based on gender
+    const measurements = gender === 'female' 
+      ? { heightCm: 165, chestCm: 86, waistCm: 70, shouldersCm: 40, sleeveCm: 58 }
+      : { heightCm: 175, chestCm: 96, waistCm: 82, shouldersCm: 46, sleeveCm: 60 };
+    
+    return { 
+      gender, 
+      measurements: { ...state.measurements, ...measurements }
+    };
+  }),
   setPreset: (preset) => set({ preset }),
   setBodyType: (bodyType) => set({ bodyType }),
   setBodyTypeIntensity: (bodyTypeIntensity) => set({ bodyTypeIntensity }),

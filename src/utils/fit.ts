@@ -30,3 +30,20 @@ export function computeFit(
   const status: FitStatus = tooTight ? 'Too Tight' : tooLoose ? 'Too Loose' : 'Perfect Fit'
   return { status, diffChest, diffWaist, diffShoulders }
 }
+
+// Rough body size suggestion from measurements. Client wants XXS–XXXL text label.
+export function sizeLabelFromMeasurements(body: { heightCm:number; chestCm:number; waistCm:number }): 'XXS'|'XS'|'S'|'M'|'L'|'XL'|'XXL'|'XXXL' {
+  // Use chest primarily; tweak by height. Tweak thresholds to taste.
+  const chest = body.chestCm
+  const height = body.heightCm
+  const adj = height < 155 ? -1 : height > 185 ? 1 : 0
+  const score = chest + adj * 3
+  if (score < 84) return 'XXS'
+  if (score < 90) return 'XS'
+  if (score < 96) return 'S'
+  if (score < 102) return 'M'
+  if (score < 110) return 'L'
+  if (score < 118) return 'XL'
+  if (score < 126) return 'XXL'
+  return 'XXXL'
+}
