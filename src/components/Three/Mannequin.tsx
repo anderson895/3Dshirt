@@ -439,7 +439,7 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
   const pantsTexStamp: number | undefined = designAny.pantsTexStamp;
 
   // Load model based on gender selection
-  const url = gender === 'female' ? "/models/femalev1.glb" : "/models/malev4.glb";
+  const url = gender === 'female' ? "/models/femalev2.glb" : "/models/malev4.glb";
   const { scene } = useGLTF(url) as unknown as GLTFScene;
   const cloned = useMemo<THREE.Group>(
     () => SkeletonUtils.clone(scene) as THREE.Group,
@@ -886,6 +886,14 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
         (Array.isArray(m.material) ? m.material : [m.material]).forEach((mat: THREE.Material) => adoptDeformFlags(m, mat));
         endoHandlesRef.current.push({ infl: m.morphTargetInfluences, index: dict[endoBest], meshName: m.name || '(mesh)' });
         info(`↳ Endomorph handle on ${m.name}: index ${dict[endoBest]} (${endoBest})`)
+      } else {
+        // Debug: Log when no endomorph morph is found
+        const endoRelated = keys.filter(k => /endo|belly|waist|abdomen|stomach|fat/i.test(k));
+        if (endoRelated.length > 0) {
+          console.warn(`⚠️ Found endomorph-related morphs but pickBestMorph didn't select any:`, endoRelated);
+        } else {
+          console.log(`ℹ️ No endomorph-related morphs found in mesh "${m.name}". Available morphs:`, keys);
+        }
       }
       const ectoBest = pickBestMorph(keys, 'ectomorph', /ecto|slim|thin/i);
       if (ectoBest) {
@@ -943,6 +951,8 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
     if (endoHandlesRef.current.length > 0) {
       console.log(`🏃 Applying ENDOMORPH morphs (${endoHandlesRef.current.length} handles) with intensity ${vEndo.toFixed(3)}:`, endoHandlesRef.current.map(h => h.meshName));
       endoHandlesRef.current.forEach((h) => (h.infl[h.index] = vEndo));
+    } else {
+      console.warn(`⚠️ No ENDOMORPH handles found for ${gender} model! Body type intensity ${vEndo.toFixed(3)} will have no effect.`);
     }
     if (ectoHandlesRef.current.length > 0) {
       console.log(`🏃 Applying ECTOMORPH morphs (${ectoHandlesRef.current.length} handles) with intensity ${vEcto.toFixed(3)}:`, ectoHandlesRef.current.map(h => h.meshName));
@@ -985,6 +995,33 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
           mesh.scale.set(ud.__baseScale.x * widen, ud.__baseScale.y, ud.__baseScale.z * widen);
           mesh.updateMatrixWorld(true);
         }
+      }
+    }
+
+    // Female-specific endomorph: use t-shirt's endomorph shape key when body morphs are not available
+    if (gender === 'female' && bodyType === 'endomorph' && endoHandlesRef.current.length === 0) {
+      const tshirt =
+        findMeshByName(cloned, /^t[-\s_]?shirt$/i) ||
+        findMeshByName(cloned, /shirt|upper|top/i);
+      if (tshirt) {
+        const mesh = tshirt as THREE.SkinnedMesh;
+        const morphDict = mesh.morphTargetDictionary as Record<string, number> | undefined;
+        const morphInfluences = mesh.morphTargetInfluences as number[] | undefined;
+        
+        if (morphDict && morphInfluences) {
+          // Look for endomorph shape key on the t-shirt
+          const endoKey = morphDict['endomorph'];
+          if (endoKey !== undefined) {
+            morphInfluences[endoKey] = vEndo;
+            console.log(`👕 FEMALE ENDOMORPH: Applied endomorph shape key to t-shirt "${mesh.name}" with intensity ${vEndo.toFixed(3)}`);
+          } else {
+            console.warn(`⚠️ FEMALE ENDOMORPH: No 'endomorph' shape key found on t-shirt "${mesh.name}". Available shape keys:`, Object.keys(morphDict));
+          }
+        } else {
+          console.warn(`⚠️ FEMALE ENDOMORPH: T-shirt "${mesh.name}" has no morph targets`);
+        }
+      } else {
+        console.warn(`⚠️ FEMALE ENDOMORPH: No t-shirt mesh found for endomorph shape key application`);
       }
     }
 
@@ -1144,4 +1181,4 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
 }
 
 useGLTF.preload("/models/malev4.glb");
-useGLTF.preload("/models/femalev1.glb");
+useGLTF.preload("/models/femalev2.glb");

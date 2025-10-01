@@ -1,3 +1,5 @@
+/* eslint-disable react-hooks/exhaustive-deps */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import Mannequin from '../components/Three/Mannequin'
 import SceneCanvas, { type SceneCanvasHandle } from '../components/Three/SceneCanva'
 import { useDesign } from '../store/designStore'
@@ -99,7 +101,7 @@ export default function Review() {
       // Lazy-load jsPDF. If not installed, a helpful alert is shown.
       const pkg = 'jspdf'
       // @vite-ignore prevents dev server from resolving it at transform time
-      const mod = await import(/* @vite-ignore */ pkg) as any
+      const mod = await import(/* @vite-ignore */ pkg) as any;
       const jsPDF = mod.jsPDF || mod.default
       const doc = new jsPDF({ unit: 'mm', format: 'a4' })
 
@@ -141,24 +143,25 @@ export default function Review() {
   }, [shirtTexCanvas, sliceAtlasPart])
 
   return (
-    <div className="grid lg:grid-cols-2 h-[calc(100vh-0px)]">
-      <div className="bg-gray-50 border-r">
+    <div className="flex flex-col lg:grid lg:grid-cols-2 h-screen">
+      <div className="bg-gray-50 border-r h-[50vh] lg:h-full">
         <SceneCanvas ref={sceneRef}>
           <Mannequin />
         </SceneCanvas>
       </div>
-      <aside className="p-5 space-y-5 bg-white">
-		<header className="space-y-3">
-			<div className="rounded-xl border bg-gradient-to-r from-indigo-600 via-purple-600 to-fuchsia-600 p-4 text-white shadow">
-				<div className="flex items-center justify-between gap-3">
-					<h2 className="font-semibold text-lg">Step 3 · Review & Export</h2>
+      <aside className="p-3 sm:p-5 space-y-3 sm:space-y-5 bg-white h-[50vh] lg:h-full overflow-auto">
+		<header className="space-y-2 sm:space-y-3">
+			<div className="rounded-xl border bg-gradient-to-r from-indigo-600 via-purple-600 to-fuchsia-600 p-3 sm:p-4 text-white shadow">
+				<div className="flex items-center justify-between gap-2 sm:gap-3">
+					<h2 className="font-semibold text-base sm:text-lg">Step 3 · Review & Export</h2>
 					<div className="hidden sm:flex items-center gap-1">
 						<span className="px-2 py-1 text-[11px] rounded-full bg-white/15 border border-white/20">1 · Customize</span>
 						<span className="px-2 py-1 text-[11px] rounded-full bg-white/15 border border-white/20">2 · Design</span>
 						<span className="px-2 py-1 text-[11px] rounded-full bg-white text-black border border-white/20">3 · Review</span>
 					</div>
 				</div>
-				<p className="text-xs text-white/90 mt-1">Preview your design, check fit, and export assets.</p>
+				<p className="text-xs text-white/90 mt-1 hidden sm:block">Preview your design, check fit, and export assets.</p>
+				<p className="text-xs text-white/90 mt-1 sm:hidden">Review and export your design.</p>
 			</div>
 		</header>
 
