@@ -67,7 +67,7 @@ const QUICK_COLORS = ['#111111','#ffffff','#f87171','#34d399','#60a5fa','#fbbf24
 
 export default function DesignPage() {
   const nav = useNavigate()
-  const { addLayer, setShirtTexCanvas, bumpShirtTexStamp, baseColor, setBaseColor, layers, garment, setGarment } = useDesign()
+  const { addLayer, setShirtTexCanvas, bumpShirtTexStamp, baseColor, setBaseColor, layers, garment, setGarment, gender } = useDesign()
   const [part, setPart] = useState<'front'|'back'|'sleeveL'|'sleeveR'>('front')
   const [shapeKind, setShapeKind] = useState<'stripe'|'rect'|'circle'>('stripe')
 
@@ -301,7 +301,41 @@ export default function DesignPage() {
               <select
                 className="border rounded px-1 sm:px-2 py-1 text-xs sm:text-sm"
                 value={garment.preset ?? 'M'}
-                onChange={(e)=> setGarment({ preset: e.target.value as any })}
+                onChange={(e)=> {
+                  const preset = e.target.value as 'S'|'M'|'L'|'XL';
+                  const currentSleeve = garment.custom?.sleeveIn ?? 8;
+                  
+                  // Only apply preset-to-slider synchronization for female gender
+                  if (gender === 'female') {
+                    // Map presets to default measurements for female
+                    const presetValues = {
+                      'S': { widthIn: 19, lengthIn: 27 },
+                      'M': { widthIn: 20, lengthIn: 28 },
+                      'L': { widthIn: 22, lengthIn: 29 },
+                      'XL': { widthIn: 24, lengthIn: 31 }
+                    };
+                    const { widthIn, lengthIn } = presetValues[preset];
+                    
+                    setGarment({ 
+                      preset, 
+                      custom: { widthIn, lengthIn, sleeveIn: currentSleeve }
+                    });
+                  } else {
+                    // For male gender, apply male-specific preset values
+                    const malePresetValues = {
+                      'S': { widthIn: 21, lengthIn: 28 }, // Male sizes
+                      'M': { widthIn: 22, lengthIn: 29 },
+                      'L': { widthIn: 24, lengthIn: 30 },
+                      'XL': { widthIn: 26, lengthIn: 31 }
+                    };
+                    const { widthIn, lengthIn } = malePresetValues[preset];
+                    
+                    setGarment({ 
+                      preset, 
+                      custom: { widthIn, lengthIn, sleeveIn: currentSleeve }
+                    });
+                  }
+                }}
               >
                 {['S','M','L','XL'].map(p => (<option key={p} value={p}>{p}</option>))}
               </select>

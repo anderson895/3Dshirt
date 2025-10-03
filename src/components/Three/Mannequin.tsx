@@ -121,22 +121,6 @@ function findMeshByName(root: THREE.Object3D, matcher: RegExp) {
 
 // (removed unused setMorphByNameSafe)
 
-function applyColor(
-  material: THREE.Material | THREE.Material[] | null | undefined,
-  color: string
-) {
-  if (!material) return;
-  const set = (m: THREE.Material) => {
-    const std = m as THREE.MeshStandardMaterial;
-    if ((std as any).isMeshStandardMaterial) {
-      std.color = new THREE.Color(color);
-      std.needsUpdate = true;
-    }
-  };
-  if (Array.isArray(material)) material.forEach(set);
-  else set(material);
-}
-
 function findMeshesByHeuristics(
   root: THREE.Object3D,
   include: RegExp,
@@ -439,7 +423,7 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
   const pantsTexStamp: number | undefined = designAny.pantsTexStamp;
 
   // Load model based on gender selection
-  const url = gender === 'female' ? "/models/femalev2.glb" : "/models/malev4.glb";
+  const url = gender === 'female' ? "/models/femalev4.glb" : "/models/malev5.glb";
   const { scene } = useGLTF(url) as unknown as GLTFScene;
   const cloned = useMemo<THREE.Group>(
     () => SkeletonUtils.clone(scene) as THREE.Group,
@@ -768,14 +752,36 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
     const mats = Array.isArray(shirtMesh.material)
       ? shirtMesh.material
       : [shirtMesh.material];
-    mats.forEach((m: THREE.Material) => {
+    
+    // Target specific material name for both genders
+    const targetMaterialPatterns = [
+      /^tshirtmat$/i,     // Exact match for "tshirtmat"
+      /tshirtmat/i,       // Contains "tshirtmat" 
+      /shirt/i,           // Contains "shirt" (fallback)
+      /tshirt/i           // Contains "tshirt" (fallback)
+    ];
+    
+    mats.forEach((m: THREE.Material, index: number) => {
       const std = m as THREE.MeshStandardMaterial;
-      std.map = null;
-      setClothOverlayBias(shirtMesh, m);
+      const matName = m.name || m.type || 'unnamed';
+      
+      // Check if this material should be recolored (skips skin materials)
+      const shouldColor = targetMaterialPatterns.some(pattern => pattern.test(matName));
+      
+      if (shouldColor) {
+        console.log(`🎨 Recoloring "tshirtmat" material "${matName}" (index ${index}) on mesh "${shirtMesh.name}" to color ${baseColor}`);
+        std.map = null;
+        std.color.set(baseColor);
+        std.metalness = 0.0;
+        std.roughness = 0.8;
+        setClothOverlayBias(shirtMesh, m);
+        std.needsUpdate = true;
+      } else {
+        console.log(`⏭️ Skipping material "${matName}" on mesh "${shirtMesh.name}" (not tshirtmat)`);
+      }
     });
-    applyColor(shirtMesh.material as any, baseColor);
     gEnd();
-  }, [cloned, baseColor, shirtTexCanvas, showClothes]);
+  }, [cloned, baseColor, shirtTexCanvas, showClothes, garment]);
 
   // Shirt: attach CanvasTexture once
   useEffect(() => {
@@ -862,6 +868,10 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
   const waistHandlesRef = useRef<Array<{ infl: number[]; index: number; meshName: string }>>([]);
   const shouldersHandlesRef = useRef<Array<{ infl: number[]; index: number; meshName: string }>>([]);
   const armsHandlesRef = useRef<Array<{ infl: number[]; index: number; meshName: string }>>([]);
+  
+  // T-shirt shape keys: width and height for female gender
+  const tshirtWidthHandlesRef = useRef<Array<{ infl: number[]; index: number; meshName: string }>>([]);
+  const tshirtHeightHandlesRef = useRef<Array<{ infl: number[]; index: number; meshName: string }>>([]);
 
   useEffect(() => {
     if (!cloned) return;
@@ -872,6 +882,8 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
     waistHandlesRef.current = [];
     shouldersHandlesRef.current = [];
     armsHandlesRef.current = [];
+    tshirtWidthHandlesRef.current = [];
+    tshirtHeightHandlesRef.current = [];
     const uniqueMorphs = new Set<string>();
     cloned.traverse((o) => {
       const m = o as any;
@@ -930,6 +942,39 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
         armsHandlesRef.current.push({ infl: m.morphTargetInfluences, index: dict[armsName], meshName: m.name || '(mesh)' });
         info(`↳ Arms macro on ${m.name}: ${armsName}`);
       }
+
+      // T-shirt specific shape keys for female gender size & fit control
+      if (gender === 'female') {
+        // Check if this is a t-shirt mesh and log all its shape keys
+        const isTshirtMesh = /t[-\s_]?shirt|upper|top/i.test(m.name || '');
+        if (isTshirtMesh) {
+          console.group(`👕 T-SHIRT MESH: "${m.name}"`);
+          console.log(`📋 All shape keys (${keys.length}):`, keys);
+          console.log(`🎯 Shape key indices:`, keys.map(key => `${key}: ${dict[key]}`));
+          console.log(`📊 Morph target influences length:`, m.morphTargetInfluences?.length);
+          console.groupEnd();
+        }
+
+        // Look for t-shirt width shape key
+        const tshirtWidthKey = pickBestMorph(keys, 'tshirtwidth', /t[-\s_]?shirt.*width|width.*t[-\s_]?shirt|shirt.*width|garment.*width/i);
+        if (tshirtWidthKey) {
+          tshirtWidthHandlesRef.current.push({ infl: m.morphTargetInfluences, index: dict[tshirtWidthKey], meshName: m.name || '(mesh)' });
+          info(`↳ T-shirt Width shape key on ${m.name}: ${tshirtWidthKey}`);
+          console.log(`✅ FOUND t-shirt width shape key "${tshirtWidthKey}" at index ${dict[tshirtWidthKey]} on mesh "${m.name}"`);
+        } else if (isTshirtMesh) {
+          console.warn(`⚠️ No t-shirt WIDTH shape key found in mesh "${m.name}". Available keys:`, keys);
+        }
+        
+        // Look for t-shirt height shape key
+        const tshirtHeightKey = pickBestMorph(keys, 'tshirtheight', /t[-\s_]?shirt.*height|height.*t[-\s_]?shirt|shirt.*height|garment.*height|t[-\s_]?shirt.*length|length.*t[-\s_]?shirt/i);
+        if (tshirtHeightKey) {
+          tshirtHeightHandlesRef.current.push({ infl: m.morphTargetInfluences, index: dict[tshirtHeightKey], meshName: m.name || '(mesh)' });
+          info(`↳ T-shirt Height shape key on ${m.name}: ${tshirtHeightKey}`);
+          console.log(`✅ FOUND t-shirt height shape key "${tshirtHeightKey}" at index ${dict[tshirtHeightKey]} on mesh "${m.name}"`);
+        } else if (isTshirtMesh) {
+          console.warn(`⚠️ No t-shirt HEIGHT shape key found in mesh "${m.name}". Available keys:`, keys);
+        }
+      }
     });
     info('🧩 All unique shape keys found:', Array.from(uniqueMorphs).sort());
     // zero all on discovery
@@ -940,6 +985,8 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
     waistHandlesRef.current.forEach((h) => (h.infl[h.index] = 0));
     shouldersHandlesRef.current.forEach((h) => (h.infl[h.index] = 0));
     armsHandlesRef.current.forEach((h) => (h.infl[h.index] = 0));
+    tshirtWidthHandlesRef.current.forEach((h) => (h.infl[h.index] = 0));
+    tshirtHeightHandlesRef.current.forEach((h) => (h.infl[h.index] = 0));
   }, [cloned]);
 
   // Drive morphs when slider/bodyType changes; also apply height scale
@@ -1025,33 +1072,160 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
       }
     }
 
-    // Apply garment width/length adjustments unless user wants morphs-only (to match Blender)
-    const tshirt =
-      findMeshByName(cloned, /^t[-\s_]?shirt$/i) ||
-      findMeshByName(cloned, /shirt|upper|top/i);
-    if (tshirt && garment && !garment.useMorphOnly) {
-      const mesh = tshirt as THREE.Mesh | THREE.SkinnedMesh;
-      const ud: any = (mesh as any).userData;
-      if (!ud.__gsBase) ud.__gsBase = mesh.scale.clone();
-      const styleFactor = garment.style === 'fit' ? 0.98 : garment.style === 'loose' ? 1.04 : 1.0;
-      // Map presets to typical measurements if custom is not set
-      const presetToIn: Record<'S'|'M'|'L'|'XL', { widthIn:number; lengthIn:number }> = {
+  // Apply separate garment scaling logic for male and female genders
+  const tshirt =
+    findMeshByName(cloned, /^t[-\s_]?shirt$/i) ||
+    findMeshByName(cloned, /shirt|upper|top/i);
+  
+  if (tshirt && garment && !garment.useMorphOnly) {
+    const mesh = tshirt as THREE.Mesh | THREE.SkinnedMesh;
+    const ud: any = (mesh as any).userData;
+      if (!ud.__gsBase) {
+        ud.__gsBase = mesh.scale.clone();
+      }
+      
+      // Ensure material is unique and preserve color
+      ensureUniqueMaterial(mesh);
+    
+    if( gender === 'female' ) {
+      // FEMALE GENDER: Apply style scaling alongside shape keys (more noticeable range)
+      const styleFactor = garment.style === 'fit' ? 0.90 : garment.style === 'loose' ? 1.10 : 1.0;
+      
+      // Get dimensions from preset or custom values for female
+      const femalePresets: Record<'S'|'M'|'L'|'XL', { widthIn:number; lengthIn:number }> = {
         S:  { widthIn: 19, lengthIn: 27 },
         M:  { widthIn: 20, lengthIn: 28 },
         L:  { widthIn: 22, lengthIn: 29 },
         XL: { widthIn: 24, lengthIn: 31 },
       };
+      
+      const preset = (garment.preset ?? 'L') as 'S'|'M'|'L'|'XL';
+      const fromPreset = femalePresets[preset];
+      const widthIn = garment.custom?.widthIn ?? fromPreset.widthIn;
+      const lengthIn = garment.custom?.lengthIn ?? fromPreset.lengthIn;
+      
+      // Apply style factor AND dimension scaling for females
+      const widthScale = styleFactor * (widthIn / 20); // Female baseline width
+      const lengthScale = styleFactor * (lengthIn / 28); // Female baseline length
+      
+      console.log(`👔 FEMALE Scaling GARMENT mesh "${mesh.name}": widthScale=${widthScale.toFixed(3)}, lengthScale=${lengthScale.toFixed(3)} (style=${garment.style} factor=${styleFactor}, preset=${garment.preset})`);
+      mesh.scale.set(ud.__gsBase.x * widthScale, ud.__gsBase.y * lengthScale, ud.__gsBase.z * widthScale);
+      
+      // Ensure color is preserved after material changes
+      if (!shirtTexCanvas && baseColor) {
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+          mats.forEach((m: THREE.Material) => {
+            const std = m as THREE.MeshStandardMaterial;
+            const matName = m.name || m.type || 'unnamed';
+            
+            const shouldColor = /^tshirtmat$/i.test(matName) || /tshirtmat/i.test(matName);
+            if (shouldColor) {
+              console.log(`🎨 Reapplying color to "tshirtmat" material "${matName}" after ${gender} scaling`);
+              std.color.set(baseColor);
+              std.needsUpdate = true;
+            }
+          });
+      }
+      
+    } else {
+      // MALE GENDER: Traditional scaling-based approach
+      const styleFactor = garment.style === 'fit' ? 0.98 : garment.style === 'loose' ? 1.04 : 1.0;
+      
+      // Gender-specific preset mappings
+      const presetToIn: Record<'S'|'M'|'L'|'XL', { widthIn:number; lengthIn:number }> = {
+        S:  { widthIn: 21, lengthIn: 28 }, // Male sizes tend to be larger
+        M:  { widthIn: 22, lengthIn: 29 },
+        L:  { widthIn: 24, lengthIn: 30 },
+        XL: { widthIn: 26, lengthIn: 31 },
+      };
+      
       const preset = (garment.preset ?? 'M') as 'S'|'M'|'L'|'XL';
       const fromPreset = presetToIn[preset];
-      const widthIn = garment.custom?.widthIn ?? fromPreset.widthIn;   // baseline by size
-      const lengthIn = garment.custom?.lengthIn ?? fromPreset.lengthIn; // baseline by size
-      const widthScale = styleFactor * (widthIn / 20);
-      const lengthScale = (lengthIn / 28);
-      console.log(`👔 Scaling GARMENT mesh "${mesh.name}": widthScale=${widthScale.toFixed(3)}, lengthScale=${lengthScale.toFixed(3)} (style=${garment.style}, preset=${garment.preset})`);
+      const widthIn = garment.custom?.widthIn ?? fromPreset.widthIn;
+      const lengthIn = garment.custom?.lengthIn ?? fromPreset.lengthIn;
+      
+      // Male-specific scaling calculations
+      const widthScale = styleFactor * (widthIn / 22); // Male baseline width
+      const lengthScale = (lengthIn / 29); // Male baseline length
+      
+      console.log(`👔 MALE Scaling GARMENT mesh "${mesh.name}": widthScale=${widthScale.toFixed(3)}, lengthScale=${lengthScale.toFixed(3)} (style=${garment.style}, preset=${garment.preset})`);
       mesh.scale.set(ud.__gsBase.x * widthScale, ud.__gsBase.y * lengthScale, ud.__gsBase.z * widthScale);
-      mesh.updateMatrixWorld(true);
+      
+      // Ensure color is preserved after material changes
+      if (!shirtTexCanvas && baseColor) {
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        mats.forEach((m: THREE.Material) => {
+          const std = m as THREE.MeshStandardMaterial;
+          const matName = m.name || m.type || 'unnamed';
+          
+          const shouldColor = /^(?!SkinMaterial)(?!skin)(?!body)(?!human)(?!flesh).*$/i.test(matName);
+          if (shouldColor) {
+            console.log(`🎨 Reapplying color to material "${matName}" after male scaling`);
+            std.color.set(baseColor);
+            std.needsUpdate = true;
+          }
+        });
+      }
     }
+    
+    mesh.updateMatrixWorld(true);
+  }
   }, [cloned, bodyType, bodyTypeIntensity, heightScale, garment]);
+
+  // ──────────────────────────────────────────────────────────────────────────────
+  // Apply t-shirt shape keys based on size & fit measurements (female gender)
+  // Uses shape keys when available instead of mesh scaling for more accurate deformation
+  // ──────────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!cloned || gender !== 'female') return;
+    if (!showClothes) return; // skip when clothes hidden
+
+    // Only apply shape keys if garment.useMorphOnly is false (to prioritize shape keys over scaling)
+    if (garment?.useMorphOnly === true) return;
+
+    // Calculate shape key values - combine preset base with custom slider adjustments
+    let widthValue = 0.0;
+    let heightValue = 0.0;
+    
+    // Base values from preset
+    const presetWidthInches = garment?.preset === 'S' ? 19 : 
+      garment?.preset === 'M' ? 20 : 
+      garment?.preset === 'L' ? 22 : 
+      garment?.preset === 'XL' ? 24 : 20; // default M
+    
+    const presetHeightInches = garment?.preset === 'S' ? 27 :
+      garment?.preset === 'M' ? 28 :
+      garment?.preset === 'L' ? 29 :
+      garment?.preset === 'XL' ? 31 : 28; // default M
+    
+    // Use custom values if provided, otherwise use preset base
+    const finalWidthInches = garment?.custom?.widthIn ?? presetWidthInches;
+    const finalHeightInches = garment?.custom?.lengthIn ?? presetHeightInches;
+    
+    // Convert to shape key values (-1 to +1 range)
+    widthValue = THREE.MathUtils.mapLinear(finalWidthInches, 19, 24, -1, 1);
+    heightValue = THREE.MathUtils.mapLinear(finalHeightInches, 27, 31, -1, 1);
+
+    // Apply t-shirt width shape keys
+    if (tshirtWidthHandlesRef.current.length > 0) {
+      console.log(`👕 Applying T-shirt WIDTH shape keys for female (${tshirtWidthHandlesRef.current.length} handles) with value ${widthValue.toFixed(3)}:`, tshirtWidthHandlesRef.current.map(h => h.meshName));
+      tshirtWidthHandlesRef.current.forEach((h) => (h.infl[h.index] = widthValue));
+    } else {
+      console.warn(`⚠️ No t-shirt WIDTH shape key handles found for female model! Width adjustment will fall back to mesh scaling.`);
+    }
+
+    // Apply t-shirt height shape keys
+    if (tshirtHeightHandlesRef.current.length > 0) {
+      console.log(`👕 Applying T-shirt HEIGHT shape keys for female (${tshirtHeightHandlesRef.current.length} handles) with value ${heightValue.toFixed(3)}:`, tshirtHeightHandlesRef.current.map(h => h.meshName));
+      tshirtHeightHandlesRef.current.forEach((h) => (h.infl[h.index] = heightValue));
+    } else {
+      console.warn(`⚠️ No t-shirt HEIGHT shape key handles found for female model! Height adjustment will fall back to mesh scaling.`);
+    }
+
+    console.log(`📏 T-shirt Shape Keys for female - Preset: ${garment?.preset || 'default'}, Width: ${widthValue.toFixed(3)}, Height: ${heightValue.toFixed(3)}`);
+    console.log(`📐 Values: Width ${finalWidthInches}" (preset: ${presetWidthInches}", slider: ${garment?.custom?.widthIn ?? 'none'}), Height ${finalHeightInches}" (preset: ${presetHeightInches}", slider: ${garment?.custom?.lengthIn ?? 'none'})`);
+    console.log(`🎯 Shape key range: Width ${widthValue.toFixed(3)}, Height ${heightValue.toFixed(3)}`);
+  }, [cloned, gender, measurements, garment, showClothes]);
 
   // ──────────────────────────────────────────────────────────────────────────────
   // Fallback body-region scaling (when per-area morphs are unavailable)
@@ -1180,5 +1354,5 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
   return <primitive object={cloned} dispose={null} />;
 }
 
-useGLTF.preload("/models/malev4.glb");
-useGLTF.preload("/models/femalev2.glb");
+useGLTF.preload("/models/malev5.glb");
+useGLTF.preload("/models/femalev4.glb");

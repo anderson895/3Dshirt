@@ -89,7 +89,7 @@ export const useDesign = create<DesignState>((set) => ({
   morphs: { height: 0.5, waist: 0.5, shoulder: 0.5, chest: 0.5, arms: 0.5 },
   heightScale: 1.0,
   measurements: { heightCm: 175, chestCm: 96, waistCm: 82, shouldersCm: 46, sleeveCm: 60 },
-  garment: { style: 'regular', preset: 'M', useMorphOnly: false },
+  garment: { style: 'regular', preset: 'L', useMorphOnly: false },
   layers: [],
 
   baseColor: '#b91c1c',
