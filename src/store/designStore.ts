@@ -89,7 +89,7 @@ export const useDesign = create<DesignState>((set) => ({
   morphs: { height: 0.5, waist: 0.5, shoulder: 0.5, chest: 0.5, arms: 0.5 },
   heightScale: 1.0,
   measurements: { heightCm: 175, chestCm: 96, waistCm: 82, shouldersCm: 46, sleeveCm: 60 },
-  garment: { style: 'regular', preset: 'L', useMorphOnly: false },
+  garment: { style: 'regular', preset: 'M', useMorphOnly: false },
   layers: [],
 
   baseColor: '#b91c1c',
@@ -118,9 +118,13 @@ export const useDesign = create<DesignState>((set) => ({
       ? { heightCm: 165, chestCm: 86, waistCm: 70, shouldersCm: 40, sleeveCm: 58 }
       : { heightCm: 175, chestCm: 96, waistCm: 82, shouldersCm: 46, sleeveCm: 60 };
     
+    // Set gender-specific default garment preset
+    const garmentPreset = gender === 'female' ? 'L' : 'M';
+    
     return { 
       gender, 
-      measurements: { ...state.measurements, ...measurements }
+      measurements: { ...state.measurements, ...measurements },
+      garment: { ...state.garment, preset: garmentPreset }
     };
   }),
   setPreset: (preset) => set({ preset }),
