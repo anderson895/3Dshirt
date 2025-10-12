@@ -1,5 +1,4 @@
 # 3D Shirt Designer
-
 A simple, client-friendly web app to design a T‑shirt on a 3D mannequin. You can:
 - Adjust the mannequin’s body (male/female, body type, height)
 - Design each shirt part (front, back, left/right sleeves)
