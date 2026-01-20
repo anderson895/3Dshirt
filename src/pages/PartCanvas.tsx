@@ -7,6 +7,17 @@ import { useDesign, type ShirtPart, type Layer } from '../store/designStore'
 
 export type PartCanvasHandle = { snapshot: () => HTMLCanvasElement | null }
 
+// UV guide image path
+const UV_GUIDE_IMAGE = '/uvtshirt.png'
+
+// Quadrant positions in the full UV atlas (2048x2048)
+const UV_QUADRANT_POSITIONS: Record<ShirtPart, { x: number; y: number }> = {
+  front: { x: 0, y: 0 },
+  back: { x: 1024, y: 0 },
+  sleeveL: { x: 0, y: 1024 },
+  sleeveR: { x: 1024, y: 1024 },
+}
+
 const SIZE = 512
 const SAFE_PAD = 24
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
@@ -355,6 +366,12 @@ type Props = {
 const PartCanvas = forwardRef<PartCanvasHandle, Props>(({ part, onDirty, showGrid = true, showSafe = true, drawMode = false }, ref) => {
   const { layers, baseColor } = useDesign()
   const items = useMemo(() => layers.filter(l => l.part === part).sort((a, b) => a.z - b.z), [layers, part])
+  
+  // Load the UV guide image
+  const [uvGuideImage] = useImage(UV_GUIDE_IMAGE, 'anonymous')
+  
+  // Get the quadrant position for this part
+  const quadrantPos = UV_QUADRANT_POSITIONS[part]
 
   const stageRef = useRef<any>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -700,7 +717,28 @@ const PartCanvas = forwardRef<PartCanvasHandle, Props>(({ part, onDirty, showGri
       >
         {/* CONTENT LAYER — this is what snapshot() captures */}
         <KLayer>
-          <Rect x={0} y={0} width={SIZE} height={SIZE} fill={baseColor} />
+          {/* UV Guide Background - show the relevant quadrant from uvtshirt.png */}
+          {uvGuideImage ? (
+            <Group
+              clipFunc={(ctx) => {
+                ctx.rect(0, 0, SIZE, SIZE)
+              }}
+            >
+              <KImage
+                image={uvGuideImage}
+                x={-quadrantPos.x / 2}
+                y={-quadrantPos.y / 2}
+                width={2048 / 2}
+                height={2048 / 2}
+                opacity={0.6}
+              />
+            </Group>
+          ) : (
+            <Rect x={0} y={0} width={SIZE} height={SIZE} fill={baseColor} />
+          )}
+          
+          {/* Semi-transparent base color overlay to show shirt color */}
+          <Rect x={0} y={0} width={SIZE} height={SIZE} fill={baseColor} opacity={0.15} />
 
           {items.length === 0 && <EmptyState part={part} />}
 

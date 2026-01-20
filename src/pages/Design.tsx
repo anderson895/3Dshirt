@@ -46,7 +46,7 @@ function UploadButton({ part }: { part: 'front'|'back'|'sleeveL'|'sleeveR' }) {
           }}
         />
         <span className="px-2 sm:px-3 py-1.5 border rounded cursor-pointer hover:bg-gray-50 text-xs sm:text-sm active:scale-95">
-          {existingImage ? 'Replace Image' : 'Upload Image'}
+          {existingImage ? 'Replace Image' : 'Import Image'}
         </span>
       </label>
 

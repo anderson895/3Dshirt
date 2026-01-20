@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useGLTF } from "@react-three/drei";
+import { useThree } from "@react-three/fiber";
 import { SkeletonUtils } from "three-stdlib";
 import { useDesign } from "../../store/designStore";
 import type { UVRects } from "../../store/designStore";
@@ -423,7 +424,7 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
   const pantsTexStamp: number | undefined = designAny.pantsTexStamp;
 
   // Load model based on gender selection
-  const url = gender === 'female' ? "/models/femalev4.glb" : "/models/malev5.glb";
+  const url = gender === 'female' ? "/models/femalev4.glb" : "/models/malev6.glb";
   const { scene } = useGLTF(url) as unknown as GLTFScene;
   const cloned = useMemo<THREE.Group>(
     () => SkeletonUtils.clone(scene) as THREE.Group,
@@ -433,6 +434,12 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
   // Persistent CanvasTextures
   const shirtTexRef = useRef<THREE.CanvasTexture | null>(null);
   const pantsTexRef = useRef<THREE.CanvasTexture | null>(null);
+  
+  // T-shirt mesh ref for dragging
+  const tshirtMeshRef = useRef<THREE.Mesh | THREE.SkinnedMesh | null>(null);
+  const isDraggingRef = useRef(false);
+  const dragStartYRef = useRef(0);
+  const dragStartOffsetRef = useRef(0);
 
   useEffect(() => {
     if (!cloned) return;
@@ -633,14 +640,17 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
     }
   }, [cloned, gender]);
 
-  // Toggle clothing visibility
+  // Toggle clothing visibility and store t-shirt mesh ref
   useEffect(() => {
     if (!cloned) return;
     // Shirt
     const tshirt =
       findMeshByName(cloned, /^t[-\s_]?shirt$/i) ||
       findMeshByName(cloned, /upper|top/i);
-    if (tshirt) (tshirt as THREE.Mesh).visible = showClothes;
+    if (tshirt) {
+      (tshirt as THREE.Mesh).visible = showClothes;
+      tshirtMeshRef.current = tshirt as THREE.Mesh | THREE.SkinnedMesh;
+    }
     // Pants
     const pants = findMeshesByHeuristics(cloned, PANTS_INCLUDE, PANTS_EXCLUDE);
     pants.forEach((p) => (p.visible = showClothes));
@@ -869,7 +879,7 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
   const shouldersHandlesRef = useRef<Array<{ infl: number[]; index: number; meshName: string }>>([]);
   const armsHandlesRef = useRef<Array<{ infl: number[]; index: number; meshName: string }>>([]);
   
-  // T-shirt shape keys: width and height for female gender
+  // T-shirt shape keys: width and height for size & fit control (both genders)
   const tshirtWidthHandlesRef = useRef<Array<{ infl: number[]; index: number; meshName: string }>>([]);
   const tshirtHeightHandlesRef = useRef<Array<{ infl: number[]; index: number; meshName: string }>>([]);
 
@@ -943,37 +953,35 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
         info(`↳ Arms macro on ${m.name}: ${armsName}`);
       }
 
-      // T-shirt specific shape keys for female gender size & fit control
-      if (gender === 'female') {
-        // Check if this is a t-shirt mesh and log all its shape keys
-        const isTshirtMesh = /t[-\s_]?shirt|upper|top/i.test(m.name || '');
-        if (isTshirtMesh) {
-          console.group(`👕 T-SHIRT MESH: "${m.name}"`);
-          console.log(`📋 All shape keys (${keys.length}):`, keys);
-          console.log(`🎯 Shape key indices:`, keys.map(key => `${key}: ${dict[key]}`));
-          console.log(`📊 Morph target influences length:`, m.morphTargetInfluences?.length);
-          console.groupEnd();
-        }
+      // T-shirt specific shape keys for size & fit control (both genders)
+      // Check if this is a t-shirt mesh and log all its shape keys
+      const isTshirtMesh = /t[-\s_]?shirt|upper|top/i.test(m.name || '');
+      if (isTshirtMesh) {
+        console.group(`👕 T-SHIRT MESH: "${m.name}" (${gender})`);
+        console.log(`📋 All shape keys (${keys.length}):`, keys);
+        console.log(`🎯 Shape key indices:`, keys.map(key => `${key}: ${dict[key]}`));
+        console.log(`📊 Morph target influences length:`, m.morphTargetInfluences?.length);
+        console.groupEnd();
+      }
 
-        // Look for t-shirt width shape key
-        const tshirtWidthKey = pickBestMorph(keys, 'tshirtwidth', /t[-\s_]?shirt.*width|width.*t[-\s_]?shirt|shirt.*width|garment.*width/i);
-        if (tshirtWidthKey) {
-          tshirtWidthHandlesRef.current.push({ infl: m.morphTargetInfluences, index: dict[tshirtWidthKey], meshName: m.name || '(mesh)' });
-          info(`↳ T-shirt Width shape key on ${m.name}: ${tshirtWidthKey}`);
-          console.log(`✅ FOUND t-shirt width shape key "${tshirtWidthKey}" at index ${dict[tshirtWidthKey]} on mesh "${m.name}"`);
-        } else if (isTshirtMesh) {
-          console.warn(`⚠️ No t-shirt WIDTH shape key found in mesh "${m.name}". Available keys:`, keys);
-        }
-        
-        // Look for t-shirt height shape key
-        const tshirtHeightKey = pickBestMorph(keys, 'tshirtheight', /t[-\s_]?shirt.*height|height.*t[-\s_]?shirt|shirt.*height|garment.*height|t[-\s_]?shirt.*length|length.*t[-\s_]?shirt/i);
-        if (tshirtHeightKey) {
-          tshirtHeightHandlesRef.current.push({ infl: m.morphTargetInfluences, index: dict[tshirtHeightKey], meshName: m.name || '(mesh)' });
-          info(`↳ T-shirt Height shape key on ${m.name}: ${tshirtHeightKey}`);
-          console.log(`✅ FOUND t-shirt height shape key "${tshirtHeightKey}" at index ${dict[tshirtHeightKey]} on mesh "${m.name}"`);
-        } else if (isTshirtMesh) {
-          console.warn(`⚠️ No t-shirt HEIGHT shape key found in mesh "${m.name}". Available keys:`, keys);
-        }
+      // Look for t-shirt width shape key
+      const tshirtWidthKey = pickBestMorph(keys, 'tshirtwidth', /t[-\s_]?shirt.*width|width.*t[-\s_]?shirt|shirt.*width|garment.*width/i);
+      if (tshirtWidthKey) {
+        tshirtWidthHandlesRef.current.push({ infl: m.morphTargetInfluences, index: dict[tshirtWidthKey], meshName: m.name || '(mesh)' });
+        info(`↳ T-shirt Width shape key on ${m.name}: ${tshirtWidthKey}`);
+        console.log(`✅ FOUND t-shirt width shape key "${tshirtWidthKey}" at index ${dict[tshirtWidthKey]} on mesh "${m.name}" (${gender})`);
+      } else if (isTshirtMesh) {
+        console.warn(`⚠️ No t-shirt WIDTH shape key found in mesh "${m.name}". Available keys:`, keys);
+      }
+      
+      // Look for t-shirt height shape key
+      const tshirtHeightKey = pickBestMorph(keys, 'tshirtheight', /t[-\s_]?shirt.*height|height.*t[-\s_]?shirt|shirt.*height|garment.*height|t[-\s_]?shirt.*length|length.*t[-\s_]?shirt/i);
+      if (tshirtHeightKey) {
+        tshirtHeightHandlesRef.current.push({ infl: m.morphTargetInfluences, index: dict[tshirtHeightKey], meshName: m.name || '(mesh)' });
+        info(`↳ T-shirt Height shape key on ${m.name}: ${tshirtHeightKey}`);
+        console.log(`✅ FOUND t-shirt height shape key "${tshirtHeightKey}" at index ${dict[tshirtHeightKey]} on mesh "${m.name}" (${gender})`);
+      } else if (isTshirtMesh) {
+        console.warn(`⚠️ No t-shirt HEIGHT shape key found in mesh "${m.name}". Available keys:`, keys);
       }
     });
     info('🧩 All unique shape keys found:', Array.from(uniqueMorphs).sort());
@@ -1134,7 +1142,7 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
       // Gender-specific preset mappings
       const presetToIn: Record<'S'|'M'|'L'|'XL', { widthIn:number; lengthIn:number }> = {
         S:  { widthIn: 21, lengthIn: 28 }, // Male sizes tend to be larger
-        M:  { widthIn: 22, lengthIn: 29 },
+        M:  { widthIn: 23.5, lengthIn: 29.2 },
         L:  { widthIn: 24, lengthIn: 30 },
         XL: { widthIn: 26, lengthIn: 31 },
       };
@@ -1145,8 +1153,8 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
       const lengthIn = garment.custom?.lengthIn ?? fromPreset.lengthIn;
       
       // Male-specific scaling calculations
-      const widthScale = styleFactor * (widthIn / 22); // Male baseline width
-      const lengthScale = (lengthIn / 29); // Male baseline length
+      const widthScale = styleFactor * (widthIn / 23.5); // Male baseline width (M preset)
+      const lengthScale = (lengthIn / 29.2); // Male baseline length (M preset)
       
       console.log(`👔 MALE Scaling GARMENT mesh "${mesh.name}": widthScale=${widthScale.toFixed(3)}, lengthScale=${lengthScale.toFixed(3)} (style=${garment.style}, preset=${garment.preset})`);
       mesh.scale.set(ud.__gsBase.x * widthScale, ud.__gsBase.y * lengthScale, ud.__gsBase.z * widthScale);
@@ -1173,11 +1181,11 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
   }, [cloned, bodyType, bodyTypeIntensity, heightScale, garment]);
 
   // ──────────────────────────────────────────────────────────────────────────────
-  // Apply t-shirt shape keys based on size & fit measurements (female gender)
+  // Apply t-shirt shape keys based on size & fit measurements (both genders)
   // Uses shape keys when available instead of mesh scaling for more accurate deformation
   // ──────────────────────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!cloned || gender !== 'female') return;
+    if (!cloned) return;
     if (!showClothes) return; // skip when clothes hidden
 
     // Only apply shape keys if garment.useMorphOnly is false (to prioritize shape keys over scaling)
@@ -1187,42 +1195,58 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
     let widthValue = 0.0;
     let heightValue = 0.0;
     
-    // Base values from preset
-    const presetWidthInches = garment?.preset === 'S' ? 19 : 
-      garment?.preset === 'M' ? 20 : 
-      garment?.preset === 'L' ? 22 : 
-      garment?.preset === 'XL' ? 24 : 20; // default M
+    // Gender-specific preset values
+    const presetWidthInches = gender === 'female'
+      ? (garment?.preset === 'S' ? 19 : 
+         garment?.preset === 'M' ? 20 : 
+         garment?.preset === 'L' ? 22 : 
+         garment?.preset === 'XL' ? 24 : 20) // default M
+      : (garment?.preset === 'S' ? 21 : 
+         garment?.preset === 'M' ? 23.5 : 
+         garment?.preset === 'L' ? 24 : 
+         garment?.preset === 'XL' ? 26 : 23.5); // default M for male
     
-    const presetHeightInches = garment?.preset === 'S' ? 27 :
-      garment?.preset === 'M' ? 28 :
-      garment?.preset === 'L' ? 29 :
-      garment?.preset === 'XL' ? 31 : 28; // default M
+    const presetHeightInches = gender === 'female'
+      ? (garment?.preset === 'S' ? 27 :
+         garment?.preset === 'M' ? 28 :
+         garment?.preset === 'L' ? 29 :
+         garment?.preset === 'XL' ? 31 : 28) // default M
+      : (garment?.preset === 'S' ? 28 :
+         garment?.preset === 'M' ? 29.2 :
+         garment?.preset === 'L' ? 30 :
+         garment?.preset === 'XL' ? 31 : 29.2); // default M for male
     
     // Use custom values if provided, otherwise use preset base
     const finalWidthInches = garment?.custom?.widthIn ?? presetWidthInches;
     const finalHeightInches = garment?.custom?.lengthIn ?? presetHeightInches;
     
-    // Convert to shape key values (-1 to +1 range)
-    widthValue = THREE.MathUtils.mapLinear(finalWidthInches, 19, 24, -1, 1);
-    heightValue = THREE.MathUtils.mapLinear(finalHeightInches, 27, 31, -1, 1);
+    // Convert to shape key values (-1 to +1 range) with gender-specific ranges
+    if (gender === 'female') {
+      widthValue = THREE.MathUtils.mapLinear(finalWidthInches, 19, 24, -1, 1);
+      heightValue = THREE.MathUtils.mapLinear(finalHeightInches, 27, 31, -1, 1);
+    } else {
+      // Male ranges: width 21-27, height 28-32 (increased max values for larger adjustments)
+      widthValue = THREE.MathUtils.mapLinear(finalWidthInches, 19, 24, -1, 1);
+      heightValue = THREE.MathUtils.mapLinear(finalHeightInches, 27, 32, -1, 1);
+    }
 
     // Apply t-shirt width shape keys
     if (tshirtWidthHandlesRef.current.length > 0) {
-      console.log(`👕 Applying T-shirt WIDTH shape keys for female (${tshirtWidthHandlesRef.current.length} handles) with value ${widthValue.toFixed(3)}:`, tshirtWidthHandlesRef.current.map(h => h.meshName));
+      console.log(`👕 Applying T-shirt WIDTH shape keys for ${gender} (${tshirtWidthHandlesRef.current.length} handles) with value ${widthValue.toFixed(3)}:`, tshirtWidthHandlesRef.current.map(h => h.meshName));
       tshirtWidthHandlesRef.current.forEach((h) => (h.infl[h.index] = widthValue));
     } else {
-      console.warn(`⚠️ No t-shirt WIDTH shape key handles found for female model! Width adjustment will fall back to mesh scaling.`);
+      console.warn(`⚠️ No t-shirt WIDTH shape key handles found for ${gender} model! Width adjustment will fall back to mesh scaling.`);
     }
 
     // Apply t-shirt height shape keys
     if (tshirtHeightHandlesRef.current.length > 0) {
-      console.log(`👕 Applying T-shirt HEIGHT shape keys for female (${tshirtHeightHandlesRef.current.length} handles) with value ${heightValue.toFixed(3)}:`, tshirtHeightHandlesRef.current.map(h => h.meshName));
+      console.log(`👕 Applying T-shirt HEIGHT shape keys for ${gender} (${tshirtHeightHandlesRef.current.length} handles) with value ${heightValue.toFixed(3)}:`, tshirtHeightHandlesRef.current.map(h => h.meshName));
       tshirtHeightHandlesRef.current.forEach((h) => (h.infl[h.index] = heightValue));
     } else {
-      console.warn(`⚠️ No t-shirt HEIGHT shape key handles found for female model! Height adjustment will fall back to mesh scaling.`);
+      console.warn(`⚠️ No t-shirt HEIGHT shape key handles found for ${gender} model! Height adjustment will fall back to mesh scaling.`);
     }
 
-    console.log(`📏 T-shirt Shape Keys for female - Preset: ${garment?.preset || 'default'}, Width: ${widthValue.toFixed(3)}, Height: ${heightValue.toFixed(3)}`);
+    console.log(`📏 T-shirt Shape Keys for ${gender} - Preset: ${garment?.preset || 'default'}, Width: ${widthValue.toFixed(3)}, Height: ${heightValue.toFixed(3)}`);
     console.log(`📐 Values: Width ${finalWidthInches}" (preset: ${presetWidthInches}", slider: ${garment?.custom?.widthIn ?? 'none'}), Height ${finalHeightInches}" (preset: ${presetHeightInches}", slider: ${garment?.custom?.lengthIn ?? 'none'})`);
     console.log(`🎯 Shape key range: Width ${widthValue.toFixed(3)}, Height ${heightValue.toFixed(3)}`);
   }, [cloned, gender, measurements, garment, showClothes]);
@@ -1240,7 +1264,6 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
       armsHandlesRef.current.length > 0;
     if (hasRegionMorphs) return; // skip fallback when proper morphs exist
 
-    // Heuristic bone finders
     const allBones: THREE.Bone[] = [] as any;
     cloned.traverse((o) => { if ((o as any).isBone) allBones.push(o as THREE.Bone); });
     const findBones = (rx: RegExp) => allBones.filter(b => rx.test(b.name || ""));
@@ -1351,8 +1374,147 @@ export default function Mannequin({ showClothes = true }: { showClothes?: boolea
     }
   }, [cloned, measurements, gender]);
 
+  // Apply vertical offset to t-shirt position
+  useEffect(() => {
+    if (!cloned || !tshirtMeshRef.current) return;
+    const tshirt = tshirtMeshRef.current;
+    const verticalOffset = garment?.verticalOffset ?? 0;
+    
+    // Store base position if not already stored
+    const ud: any = (tshirt as any).userData;
+    if (ud.__basePositionY === undefined) {
+      ud.__basePositionY = tshirt.position.y;
+    }
+    
+    // Apply vertical offset
+    tshirt.position.y = ud.__basePositionY + verticalOffset;
+    tshirt.updateMatrixWorld(true);
+  }, [cloned, garment?.verticalOffset]);
+
+  // Set up drag handlers for t-shirt using canvas events and raycasting
+  const { gl, camera, raycaster } = useThree();
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  
+  useEffect(() => {
+    if (!cloned || !tshirtMeshRef.current) return;
+    canvasRef.current = gl.domElement;
+    
+    const tshirt = tshirtMeshRef.current;
+    const { setGarment } = useDesign.getState();
+    
+    const handlePointerMoveHover = (event: PointerEvent | MouseEvent | TouchEvent) => {
+      if (!canvasRef.current || !tshirt || isDraggingRef.current) return;
+      
+      let clientX: number;
+      let clientY: number;
+      
+      if ('touches' in event && event.touches.length > 0) {
+        clientX = event.touches[0].clientX;
+        clientY = event.touches[0].clientY;
+      } else if ('clientX' in event) {
+        clientX = event.clientX;
+        clientY = event.clientY;
+      } else {
+        return;
+      }
+      
+      // Raycast to check if we're hovering over the t-shirt
+      const rect = canvasRef.current.getBoundingClientRect();
+      const x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      const y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      
+      raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
+      const intersects = raycaster.intersectObject(tshirt, true);
+      
+      if (intersects.length > 0) {
+        canvasRef.current.style.cursor = 'grab';
+      } else {
+        canvasRef.current.style.cursor = '';
+      }
+    };
+    
+    const handlePointerDown = (event: PointerEvent | MouseEvent | TouchEvent) => {
+      if (!canvasRef.current || !tshirt) return;
+      
+      // Only handle left mouse button or primary touch
+      if ('button' in event && event.button !== 0) return;
+      
+      const clientX = 'touches' in event ? event.touches[0].clientX : event.clientX;
+      const clientY = 'touches' in event ? event.touches[0].clientY : event.clientY;
+      
+      // Raycast to check if we clicked on the t-shirt
+      const rect = canvasRef.current.getBoundingClientRect();
+      const x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      const y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      
+      raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
+      const intersects = raycaster.intersectObject(tshirt, true);
+      
+      if (intersects.length > 0) {
+        event.preventDefault();
+        event.stopPropagation();
+        isDraggingRef.current = true;
+        dragStartYRef.current = clientY;
+        dragStartOffsetRef.current = garment?.verticalOffset ?? 0;
+        canvasRef.current.style.cursor = 'grabbing';
+      }
+    };
+    
+    const handlePointerMove = (event: PointerEvent | MouseEvent | TouchEvent) => {
+      if (!isDraggingRef.current || !canvasRef.current) return;
+      
+      const clientY = 'touches' in event ? event.touches[0].clientY : event.clientY;
+      const deltaY = dragStartYRef.current - clientY;
+      
+      // Convert screen pixels to world units
+      // Adjust sensitivity as needed - smaller values = less movement per pixel
+      const sensitivity = 0.01;
+      const newOffset = dragStartOffsetRef.current + (deltaY * sensitivity);
+      
+      // Clamp offset to reasonable range (e.g., -0.5 to 0.5 units)
+      const clampedOffset = THREE.MathUtils.clamp(newOffset, -0.5, 0.5);
+      
+      setGarment({ verticalOffset: clampedOffset });
+    };
+    
+    const handlePointerUp = () => {
+      if (isDraggingRef.current && canvasRef.current) {
+        canvasRef.current.style.cursor = '';
+      }
+      isDraggingRef.current = false;
+    };
+    
+    // Add event listeners to the canvas
+    const canvas = canvasRef.current;
+    canvas.addEventListener('pointerdown', handlePointerDown);
+    canvas.addEventListener('mousedown', handlePointerDown);
+    canvas.addEventListener('touchstart', handlePointerDown);
+    canvas.addEventListener('pointermove', handlePointerMoveHover);
+    canvas.addEventListener('mousemove', handlePointerMoveHover);
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('mousemove', handlePointerMove);
+    window.addEventListener('touchmove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('mouseup', handlePointerUp);
+    window.addEventListener('touchend', handlePointerUp);
+    
+    return () => {
+      canvas.removeEventListener('pointerdown', handlePointerDown);
+      canvas.removeEventListener('mousedown', handlePointerDown);
+      canvas.removeEventListener('touchstart', handlePointerDown);
+      canvas.removeEventListener('pointermove', handlePointerMoveHover);
+      canvas.removeEventListener('mousemove', handlePointerMoveHover);
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('mousemove', handlePointerMove);
+      window.removeEventListener('touchmove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('mouseup', handlePointerUp);
+      window.removeEventListener('touchend', handlePointerUp);
+    };
+  }, [cloned, garment?.verticalOffset, gl, camera, raycaster]);
+
   return <primitive object={cloned} dispose={null} />;
 }
 
-useGLTF.preload("/models/malev5.glb");
+useGLTF.preload("/models/malev6.glb");
 useGLTF.preload("/models/femalev4.glb");

@@ -9,7 +9,7 @@ export type ShirtPart = 'front' | 'back' | 'sleeveL' | 'sleeveR'
 
 export type MorphSet = { height: number; waist: number; shoulder: number; chest: number; arms: number }
 export type Measurements = { heightCm: number; chestCm: number; waistCm: number; shouldersCm: number; sleeveCm: number }
-export type GarmentConfig = { preset?: 'S'|'M'|'L'|'XL'; custom?: { widthIn: number; lengthIn: number; sleeveIn: number }; style: GarmentStyle; useMorphOnly?: boolean }
+export type GarmentConfig = { preset?: 'S'|'M'|'L'|'XL'; custom?: { widthIn: number; lengthIn: number; sleeveIn: number }; style: GarmentStyle; useMorphOnly?: boolean; verticalOffset?: number }
 
 export type Layer = {
   id: string
@@ -79,6 +79,7 @@ export type DesignState = {
   addLayer: (l: Layer) => void
   updateLayer: (id: string, patch: Partial<Layer>) => void
   removeLayer: (id: string) => void
+  clearLayers: () => void
 }
 
 export const useDesign = create<DesignState>((set) => ({
@@ -89,7 +90,7 @@ export const useDesign = create<DesignState>((set) => ({
   morphs: { height: 0.5, waist: 0.5, shoulder: 0.5, chest: 0.5, arms: 0.5 },
   heightScale: 1.0,
   measurements: { heightCm: 175, chestCm: 96, waistCm: 82, shouldersCm: 46, sleeveCm: 60 },
-  garment: { style: 'regular', preset: 'M', useMorphOnly: false },
+  garment: { style: 'regular', preset: 'M', useMorphOnly: false, verticalOffset: 0 },
   layers: [],
 
   baseColor: '#b91c1c',
@@ -137,4 +138,5 @@ export const useDesign = create<DesignState>((set) => ({
   addLayer: (l) => set((s) => ({ layers: [...s.layers, l] })),
   updateLayer: (id, patch) => set((s) => ({ layers: s.layers.map((L) => (L.id === id ? { ...L, ...patch } : L)) })),
   removeLayer: (id) => set((s) => ({ layers: s.layers.filter((L) => L.id !== id) })),
+  clearLayers: () => set({ layers: [] }),
 }))

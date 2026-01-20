@@ -4,15 +4,81 @@ import Mannequin from '../components/Three/Mannequin'
 import SceneCanvas, { type SceneCanvasHandle } from '../components/Three/SceneCanva'
 import { useDesign } from '../store/designStore'
 import { computeFit } from '../utils/fit'
-import { useCallback, useRef } from 'react'
+import { useCallback, useRef, useState, useEffect } from 'react'
+import { galleryService, exportDesignData } from '../services/galleryService'
+import { supabase } from '../lib/supabase'
+import type { User } from '@supabase/supabase-js'
+import type { DesignState } from '../store/designStore'
+import { useNavigate } from 'react-router-dom'
 
 export default function Review() {
-  const { measurements, garment, shirtTexCanvas } = useDesign()
+  const navigate = useNavigate()
+  const { 
+    gender, preset, bodyType, bodyTypeIntensity, heightScale, 
+    measurements, garment, shirtTexCanvas, baseColor, skinColor, layers 
+  } = useDesign()
   const fit = computeFit(measurements, garment)
 
   const hasAtlas = !!shirtTexCanvas
+  const [user, setUser] = useState<User | null>(null)
+  const [saving, setSaving] = useState(false)
 
   const sceneRef = useRef<SceneCanvasHandle | null>(null)
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setUser(data.session?.user ?? null)
+    })
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
+
+  const handleSaveDesign = async () => {
+    if (!user) {
+      // Navigate to signin page if user is not authenticated
+      navigate('/signin')
+      return
+    }
+
+    setSaving(true)
+    try {
+      // Capture thumbnail from the 3D scene
+      let thumbnailDataUrl: string | undefined = undefined
+      try {
+        // Get the canvas element from the scene ref
+        const canvasDataUrl = sceneRef.current?.capturePngDataUrl()
+        if (canvasDataUrl) {
+          thumbnailDataUrl = canvasDataUrl
+        }
+      } catch (err) {
+        console.warn('Could not capture thumbnail:', err)
+      }
+
+      const designData = exportDesignData({ 
+        gender, preset, bodyType, bodyTypeIntensity, heightScale, 
+        measurements, garment, baseColor, skinColor, layers 
+      } as Partial<DesignState>)
+      
+      const title = prompt('Enter a title for this design:') || 'Untitled Design'
+      const { error } = await galleryService.saveDesign(designData, title, thumbnailDataUrl)
+      
+      if (error) {
+        alert('Failed to save design: ' + error.message)
+      } else {
+        alert('Design saved successfully to your gallery!')
+        // Navigate to gallery after successful save
+        navigate('/gallery')
+      }
+    } catch {
+      alert('Failed to save design')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const handleDownloadPicture = useCallback(async () => {
     const dataUrl = sceneRef.current?.capturePngDataUrl() || null
@@ -85,24 +151,98 @@ export default function Review() {
 
   const handleDownloadPNGs = useCallback(async () => {
     if (!shirtTexCanvas) return
+    
+    // Load UV guide image
+    const uvGuideImg = new Image()
+    uvGuideImg.crossOrigin = 'anonymous'
+    await new Promise<void>((resolve, reject) => {
+      uvGuideImg.onload = () => resolve()
+      uvGuideImg.onerror = () => reject(new Error('Failed to load UV guide image'))
+      uvGuideImg.src = '/uvtshirt.png'
+    })
+
+    // Detect actual image size and calculate quadrant positions accordingly
+    const imgWidth = uvGuideImg.naturalWidth
+    const imgHeight = uvGuideImg.naturalHeight
+    const quadrantWidth = imgWidth / 2
+    const quadrantHeight = imgHeight / 2
+    
+    // Quadrant positions in the UV atlas (adjusted for actual image size)
+    const UV_QUADRANT_POSITIONS: Record<'front'|'back'|'sleeveL'|'sleeveR', { x: number; y: number }> = {
+      front: { x: 0, y: 0 },
+      back: { x: quadrantWidth, y: 0 },
+      sleeveL: { x: 0, y: quadrantHeight },
+      sleeveR: { x: quadrantWidth, y: quadrantHeight },
+    }
+
+    // Helper function to create composite image with UV guide + design
+    const createCompositePart = async (part: 'front'|'back'|'sleeveL'|'sleeveR'): Promise<Blob | null> => {
+      const quadrantPos = UV_QUADRANT_POSITIONS[part]
+      const partSize = 1024 // Output size is always 1024x1024
+      
+      // Create composite canvas
+      const compositeCanvas = document.createElement('canvas')
+      compositeCanvas.width = partSize
+      compositeCanvas.height = partSize
+      const ctx = compositeCanvas.getContext('2d')!
+      
+      // Clear canvas to ensure no artifacts
+      ctx.clearRect(0, 0, partSize, partSize)
+      
+      // Draw only the relevant quadrant from UV guide as background (full opacity)
+      // Crop the specific quadrant from the UV guide image and scale it to fit the output canvas
+      const sourceX = quadrantPos.x
+      const sourceY = quadrantPos.y
+      const sourceWidth = quadrantWidth
+      const sourceHeight = quadrantHeight
+      
+      ctx.drawImage(
+        uvGuideImg,
+        sourceX, sourceY, sourceWidth, sourceHeight, // Source: crop ONLY this quadrant from UV guide
+        0, 0, partSize, partSize // Destination: scale and draw to full output canvas
+      )
+      
+      // Draw user's design on top with reduced opacity so UV guidelines remain visible
+      const designBlob = await sliceAtlasPart(part)
+      if (designBlob) {
+        const designImg = new Image()
+        await new Promise<void>((resolve) => {
+          designImg.onload = () => {
+            // Save context state
+            ctx.save()
+            // Set opacity for design layer (0.6 = 60% opacity, so UV guide shows through)
+            ctx.globalAlpha = 0.6
+            ctx.drawImage(designImg, 0, 0, partSize, partSize)
+            // Restore context state
+            ctx.restore()
+            resolve()
+          }
+          designImg.src = URL.createObjectURL(designBlob)
+        })
+        URL.revokeObjectURL(designImg.src)
+      }
+      
+      return await new Promise<Blob | null>((resolve) => 
+        compositeCanvas.toBlob((b) => resolve(b), 'image/png')
+      )
+    }
+
     const parts: Array<'front'|'back'|'sleeveL'|'sleeveR'> = ['front','back','sleeveL','sleeveR']
     for (const p of parts) {
-      const blob = await sliceAtlasPart(p)
+      const blob = await createCompositePart(p)
       if (blob) {
         const sizeLabel = garment.preset ? garment.preset : `${(garment.custom?.widthIn??20).toFixed(0)}x${(garment.custom?.lengthIn??28).toFixed(0)}in`
         downloadBlob(blob, `shirt-${p}-${sizeLabel}.png`)
       }
     }
-  }, [shirtTexCanvas, sliceAtlasPart])
+  }, [shirtTexCanvas, sliceAtlasPart, garment])
 
   const handleDownloadPDF = useCallback(async () => {
     if (!shirtTexCanvas) return
     try {
       // Lazy-load jsPDF. If not installed, a helpful alert is shown.
-      const pkg = 'jspdf'
       // @vite-ignore prevents dev server from resolving it at transform time
-      const mod = await import(/* @vite-ignore */ pkg) as any;
-      const jsPDF = mod.jsPDF || mod.default
+      const { jsPDF } = await import(/* @vite-ignore */ 'jspdf');
       const doc = new jsPDF({ unit: 'mm', format: 'a4' })
 
       const parts: Array<{ key:'front'|'back'|'sleeveL'|'sleeveR'; label: string }> = [
@@ -112,35 +252,145 @@ export default function Review() {
         { key: 'sleeveR', label: 'Right Sleeve' },
       ]
 
+      // Load UV guide image
+      const uvGuideImg = new Image()
+      uvGuideImg.crossOrigin = 'anonymous'
+      await new Promise<void>((resolve, reject) => {
+        uvGuideImg.onload = () => resolve()
+        uvGuideImg.onerror = () => reject(new Error('Failed to load UV guide image'))
+        uvGuideImg.src = '/uvtshirt.png'
+      })
+
+      // Detect actual image size and calculate quadrant positions accordingly
+      const imgWidth = uvGuideImg.naturalWidth
+      const imgHeight = uvGuideImg.naturalHeight
+      const quadrantWidth = imgWidth / 2
+      const quadrantHeight = imgHeight / 2
+      
+      // Quadrant positions in the UV atlas (adjusted for actual image size)
+      const UV_QUADRANT_POSITIONS: Record<'front'|'back'|'sleeveL'|'sleeveR', { x: number; y: number }> = {
+        front: { x: 0, y: 0 },
+        back: { x: quadrantWidth, y: 0 },
+        sleeveL: { x: 0, y: quadrantHeight },
+        sleeveR: { x: quadrantWidth, y: quadrantHeight },
+      }
+
+      // Helper function to create composite image with UV guide + design
+      const createCompositePart = async (part: 'front'|'back'|'sleeveL'|'sleeveR'): Promise<string> => {
+        const quadrantPos = UV_QUADRANT_POSITIONS[part]
+        const partSize = 1024 // Output size is always 1024x1024
+        
+        // Create composite canvas
+        const compositeCanvas = document.createElement('canvas')
+        compositeCanvas.width = partSize
+        compositeCanvas.height = partSize
+        const ctx = compositeCanvas.getContext('2d')!
+        
+        // Clear canvas to ensure no artifacts
+        ctx.clearRect(0, 0, partSize, partSize)
+        
+        // Draw only the relevant quadrant from UV guide as background
+        // Crop the specific quadrant from the UV guide image and scale it to fit the output canvas
+        const sourceX = quadrantPos.x
+        const sourceY = quadrantPos.y
+        const sourceWidth = quadrantWidth
+        const sourceHeight = quadrantHeight
+        
+        ctx.drawImage(
+          uvGuideImg,
+          sourceX, sourceY, sourceWidth, sourceHeight, // Source: crop ONLY this quadrant from UV guide
+          0, 0, partSize, partSize // Destination: scale and draw to full output canvas
+        )
+        
+        // Draw user's design on top with reduced opacity so UV guidelines remain visible
+        const designBlob = await sliceAtlasPart(part)
+        if (designBlob) {
+          const designImg = new Image()
+          await new Promise<void>((resolve) => {
+            designImg.onload = () => {
+              // Save context state
+              ctx.save()
+              // Set opacity for design layer (0.6 = 60% opacity, so UV guide shows through)
+              ctx.globalAlpha = 0.6
+              ctx.drawImage(designImg, 0, 0, partSize, partSize)
+              // Restore context state
+              ctx.restore()
+              resolve()
+            }
+            designImg.src = URL.createObjectURL(designBlob)
+          })
+          URL.revokeObjectURL(designImg.src)
+        }
+        
+        return compositeCanvas.toDataURL('image/png')
+      }
+
+      // Helper function to safely format text (avoid special character issues)
+      const safeText = (text: string) => text.replace(/[^\x00-\x7F]/g, (char) => {
+        const map: Record<string, string> = {
+          '–': '-', '—': '-', '×': 'x', '‑': '-'
+        }
+        return map[char] || char
+      })
+
       for (let i = 0; i < parts.length; i++) {
         const { key, label } = parts[i]
-        const blob = await sliceAtlasPart(key)
-        if (!blob) continue
-        const dataUrl = await new Promise<string>((resolve) => {
-          const fr = new FileReader()
-          fr.onload = () => resolve(fr.result as string)
-          fr.readAsDataURL(blob)
-        })
+        const dataUrl = await createCompositePart(key)
 
         if (i > 0) doc.addPage()
-        // Simple layout: title + square image centered
-        doc.setFontSize(14)
-        const sz = garment.preset ? `Size ${garment.preset}` : `${(garment.custom?.widthIn??20).toFixed(1)}×${(garment.custom?.lengthIn??28).toFixed(1)} in`
-        doc.text(`T‑Shirt Design – ${label} – ${sz}`, 105, 18, { align: 'center' })
+        
         const pageW = doc.internal.pageSize.getWidth()
+        const pageH = doc.internal.pageSize.getHeight()
+        
+        // Header section
+        doc.setFontSize(16)
+        doc.setFont('helvetica', 'bold')
+        const title = safeText(`T-Shirt Design - ${label}`)
+        doc.text(title, pageW / 2, 15, { align: 'center' })
+        
+        // Size and style info
+        doc.setFontSize(11)
+        doc.setFont('helvetica', 'normal')
+        const sizeText = garment.preset 
+          ? `Size: ${garment.preset}` 
+          : `Dimensions: ${(garment.custom?.widthIn??20).toFixed(1)} x ${(garment.custom?.lengthIn??28).toFixed(1)} in`
+        const styleText = `Style: ${garment.style || 'regular'}`
+        doc.text(safeText(sizeText), pageW / 2, 22, { align: 'center' })
+        doc.text(safeText(styleText), pageW / 2, 27, { align: 'center' })
+        
+        // Measurements info (on first page only)
+        if (i === 0) {
+          doc.setFontSize(9)
+          const measurementsText = `Measurements: H ${measurements.heightCm}cm | C ${measurements.chestCm}cm | W ${measurements.waistCm}cm | S ${measurements.shouldersCm}cm`
+          doc.text(safeText(measurementsText), pageW / 2, 32, { align: 'center' })
+        }
+        
+        // Image
         const maxW = pageW - 30 // 15mm margins
         const size = Math.min(maxW, 170)
         const x = (pageW - size) / 2
-        const y = 28
+        const y = i === 0 ? 38 : 32 // More space on first page for measurements
         doc.addImage(dataUrl, 'PNG', x, y, size, size)
+        
+        // Footer
+        doc.setFontSize(8)
+        doc.setTextColor(128, 128, 128)
+        const pageNum = `Page ${i + 1} of ${parts.length}`
+        doc.text(pageNum, pageW / 2, pageH - 10, { align: 'center' })
+        doc.setTextColor(0, 0, 0) // Reset to black
       }
 
       doc.save('shirt-design.pdf')
     } catch (err) {
-      console.warn('PDF export requires jsPDF. Install with: npm i jspdf', err)
-      alert('PDF export needs jsPDF. Please run:\n\n  npm i jspdf\n\nThen try again.')
+      console.error('PDF export error:', err)
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      if (errorMessage.includes('Failed to fetch') || errorMessage.includes('Cannot find module')) {
+        alert('PDF export needs jsPDF. Please:\n\n1. Restart your dev server (stop and run "npm run dev" again)\n2. Then try the PDF export again.')
+      } else {
+        alert(`PDF export error: ${errorMessage}\n\nIf jsPDF is installed, try restarting your dev server.`)
+      }
     }
-  }, [shirtTexCanvas, sliceAtlasPart])
+  }, [shirtTexCanvas, sliceAtlasPart, garment, measurements])
 
   return (
     <div className="flex flex-col lg:grid lg:grid-cols-2 h-screen">
@@ -199,6 +449,30 @@ export default function Review() {
 			{!hasAtlas && (
 				<p className="text-[11px] text-red-600">No design atlas yet — open Design and add any element.</p>
 			)}
+			
+			{/* Save to Gallery Button */}
+			<div className="pt-2">
+				<button
+					onClick={handleSaveDesign}
+					disabled={saving || (user !== null && !user)}
+					className={`w-full px-4 py-2 rounded-md flex items-center justify-center gap-2 font-medium transition-all ${
+						user 
+							? saving 
+								? 'bg-purple-400 text-white cursor-not-allowed' 
+								: 'bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700 active:scale-95 shadow-lg'
+							: 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 active:scale-95 shadow-lg'
+					}`}
+					title={user ? 'Save your design to your gallery' : 'Click to sign in and save designs'}
+				>
+					<span>💾</span>
+					<span>{saving ? 'Saving...' : user ? 'Save to Gallery' : 'Sign In to Save'}</span>
+				</button>
+				{!user && (
+					<p className="text-[11px] text-gray-600 mt-1 text-center">
+						Click to sign in and save your designs to the gallery.
+					</p>
+				)}
+			</div>
 		</section>
 
 		<section className="rounded-xl border p-4 space-y-3">

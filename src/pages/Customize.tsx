@@ -4,12 +4,18 @@ import { useDesign } from '../store/designStore'
 import { estimateMeasurementsFromMorphs } from '../utils/morphs'
 import { sizeLabelFromMeasurements } from '../utils/fit'
 import { useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { galleryService, exportDesignData } from '../services/galleryService'
+import { supabase } from '../lib/supabase'
+import type { User } from '@supabase/supabase-js'
+import type { DesignState } from '../store/designStore'
 
 export default function Customize() {
   const nav = useNavigate()
   const { 
     gender,
     setGender,
+    preset,
     bodyType, 
     setBodyType, 
     bodyTypeIntensity, 
@@ -21,8 +27,50 @@ export default function Customize() {
     measurements, 
     setMeasurements,
     skinColor,
-    setSkinColor
+    setSkinColor,
+    garment,
+    baseColor,
+    layers
   } = useDesign()
+
+  const [user, setUser] = useState<User | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setUser(data.session?.user ?? null)
+    })
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
+
+  const handleSave = async () => {
+    if (!user) {
+      alert('Please sign in to save your design')
+      return
+    }
+
+    setSaving(true)
+    try {
+      const designData = exportDesignData({ gender, preset, bodyType, bodyTypeIntensity, heightScale, measurements, garment, baseColor, skinColor, layers } as Partial<DesignState>)
+      const title = prompt('Enter a title for this design:') || 'Untitled Design'
+      const { error } = await galleryService.saveDesign(designData, title)
+      
+      if (error) {
+        alert('Failed to save design: ' + error.message)
+      } else {
+        alert('Design saved successfully!')
+      }
+    } catch {
+      alert('Failed to save design')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const setIntensityClamped = (v: number) => setBodyTypeIntensity(Math.min(1, Math.max(0, v)))
 
@@ -329,8 +377,17 @@ export default function Customize() {
         </div>
         {/* Sticky footer CTA */}
         <div className="sticky bottom-0 bg-white pt-2 border-t lg:border-t-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button className="px-2 sm:px-3 py-2 border rounded text-xs sm:text-sm active:scale-95" onClick={()=>{ setIntensityClamped(0); setHeightScale(1.0); }}>Reset All</button>
+            {user && (
+              <button 
+                onClick={handleSave} 
+                disabled={saving}
+                className="px-2 sm:px-3 py-2 border rounded text-xs sm:text-sm active:scale-95 bg-blue-500 text-white disabled:opacity-50"
+              >
+                {saving ? 'Saving...' : '💾 Save'}
+              </button>
+            )}
             <button onClick={()=>nav('/design')} className="flex-1 px-3 sm:px-4 py-2 rounded bg-black text-white text-sm sm:text-base active:scale-95">Next: Design Shirt</button>
           </div>
         </div>
